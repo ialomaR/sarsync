@@ -1,0 +1,25 @@
+node_modules
+dist
+build
+uploads
+.DS_Store
+*.log
+
+# env
+.env
+.env.local
+.env.*.local
+
+# editors
+.vscode
+.idea
+
+# OS
+Thumbs.db
+
+# Prisma
+**/prisma/migrations/dev.db*
+
+# turbo / nx caches if added later
+.turbo
+.next

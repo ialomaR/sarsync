@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sarsync-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sarsync
+      POSTGRES_PASSWORD: sarsync_dev
+      POSTGRES_DB: sarsync
+    ports:
+      - "5433:5432"
+    volumes:
+      - sarsync_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sarsync -d sarsync"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: sarsync-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - sarsync_redis:/data
+
+volumes:
+  sarsync_db:
+  sarsync_redis:

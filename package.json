@@ -1,0 +1,22 @@
+{
+  "name": "sarsync",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @sarsync/web",
+    "dev:api": "npm run dev -w @sarsync/api",
+    "build:web": "npm run build -w @sarsync/web",
+    "build:api": "npm run build -w @sarsync/api",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f db",
+    "prisma:generate": "npm run prisma:generate -w @sarsync/api",
+    "prisma:migrate": "npm run prisma:migrate -w @sarsync/api",
+    "prisma:studio": "npm run prisma:studio -w @sarsync/api",
+    "prisma:seed": "npm run prisma:seed -w @sarsync/api"
+  }
+}

@@ -1,0 +1,86 @@
+/* Mobile responsive overrides. Most styles in the app are inline; this file
+   handles only the tweaks that need media queries.
+
+   Breakpoint: 767px (≤ phones / small tablets in portrait). */
+
+/* ── Mention editor (contenteditable) ──────────────────────────────────────
+   Used by the chat composer + edit box. Shows a placeholder when empty and
+   styles inline mention chips so they read as one unit while typing. */
+.mention-editor[contenteditable="true"]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--mention-placeholder, rgba(0,0,0,.4));
+  pointer-events: none;
+}
+.mention-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  user-select: all;
+}
+
+@media (max-width: 767px) {
+  /* TopBar — search collapses to icon-only on phones */
+  .topbar-search {
+    width: auto !important;
+    padding: 6px 8px !important;
+  }
+  .topbar-search-text,
+  .topbar-search-kbd {
+    display: none !important;
+  }
+
+  /* CardModal — fullscreen on mobile (no padding around the overlay; card
+     fills the viewport). The auto-scroll and gesture-friendly close button
+     in the header still work. */
+  .card-modal-overlay {
+    padding: 0 !important;
+  }
+  .card-modal-card {
+    width: 100% !important;
+    min-height: 100vh;
+    border-radius: 0 !important;
+  }
+
+  /* Auth shell — hide the brand panel; let the form take the whole screen. */
+  .auth-brand-panel {
+    display: none !important;
+  }
+  .auth-form-panel {
+    width: 100% !important;
+    padding: 24px 18px !important;
+  }
+
+  /* Boards home grid — stack to a single column. */
+  .boards-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Dept page header padding tightens up on phone widths. */
+  .dept-header-pad {
+    padding: 18px 16px !important;
+  }
+  .dept-tabs-pad {
+    padding: 0 12px !important;
+  }
+  .dept-content-pad {
+    padding: 14px 12px 28px !important;
+  }
+
+  /* Admin two-column layouts → stack. The inner sidebar becomes a top
+     section, the content panel sits underneath. */
+  .admin-grid-2col {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto 1fr !important;
+    overflow: auto !important;
+  }
+  .admin-grid-2col > div:first-child {
+    border-inline-end: none !important;
+    border-bottom: .5px solid rgba(0,0,0,.08) !important;
+  }
+
+  /* Kanban board: tighter horizontal padding and let lists breathe. */
+  .board-subbar {
+    padding: 10px 12px !important;
+  }
+}

@@ -1,0 +1,545 @@
+// SarSync DB schema
+//
+// Hierarchy: Workspace → Department → Team → Member (User)
+// Work:      Workspace → Board → List → Card
+// Each Board belongs to a Department + Team (drives RBAC).
+//
+// Roles (per-membership):
+//   admin        — full workspace access
+//   dept_manager — manages a department
+//   team_lead    — manages a team's projects
+//   member       — sees own work + team projects
+//   guest        — read-only on shared boards
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Identity ────────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified DateTime?
+  passwordHash  String?  // null when only OAuth
+  firstName     String
+  lastName      String
+  avatarColor   String   @default("#3B82F6")  // for the initials avatar
+  locale        String   @default("en")       // 'en' | 'ar'
+  // ── 2FA (TOTP) ────────────────────────────────────────────────
+  twoFactorEnabled     Boolean @default(false)
+  twoFactorSecret      String? // base32-encoded TOTP secret
+  // bcrypt hashes of one-time backup codes (~10 codes); JSON string array
+  twoFactorBackupCodes Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  oauthAccounts          OAuthAccount[]
+  memberships            Membership[]
+  refreshTokens          RefreshToken[]
+  passwordResetTokens    PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  invitesSent            Invite[]            @relation("invited_by")
+
+  // Cards & comments authored
+  comments      Comment[]
+  cardsCreated  Card[]         @relation("card_created_by")
+  activityLog   Activity[]
+  cardMembers   CardMember[]
+  attachments   Attachment[]   @relation("attachment_uploaded_by")
+  boardStars    BoardStar[]
+
+  // Notifications received
+  notifications      Notification[] @relation("notif_recipient")
+  notificationsActed Notification[] @relation("notif_actor")
+
+  // Boards the user has explicit access to (cross-department)
+  boardMemberships   BoardMember[]
+  // Files uploaded to department media libraries
+  mediaUploads       MediaItem[]
+  // Chat messages authored
+  chatMessages       ChatMessage[]
+
+  @@index([email])
+}
+
+// In-app notifications. Created on key events; surfaced via the bell icon.
+// We don't notify the actor for actions they themselves performed.
+model Notification {
+  id          String   @id @default(cuid())
+  recipientId String
+  actorId     String?  // null for system-generated
+  workspaceId String?
+  kind        String   // 'card_assigned' | 'comment_added' | 'card_due_soon' | 'invite_accepted' | ...
+  title       String
+  body        String?
+  // Where to navigate when clicked, e.g. '/b/<id>?card=<id>'
+  link        String?
+  // Free-form context (cardId, boardId, etc.) for client-side hydration if needed
+  meta        Json?
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  recipient User  @relation("notif_recipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor     User? @relation("notif_actor",     fields: [actorId],     references: [id], onDelete: SetNull)
+
+  @@index([recipientId, createdAt])
+  @@index([recipientId, readAt])
+}
+
+model OAuthAccount {
+  id           String  @id @default(cuid())
+  userId       String
+  provider     String  // 'google'
+  providerUid  String  // sub from id_token
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUid])
+  @@index([userId])
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique  // sha256 of the token
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+  userAgent  String?
+  ip         String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// One-time email-verification token. Mailed on signup; consumed (usedAt
+// set) on click. Short TTL (24h).
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// One-time-use token for password reset. Stored hashed, short TTL.
+// Consumed (usedAt set) on successful reset; we also revoke any unused
+// tokens for the same user when one is consumed.
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+  ip         String?
+  userAgent  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ── Workspace + Org structure ──────────────────────────────────────────────
+
+model Workspace {
+  id        String   @id @default(cuid())
+  slug      String   @unique  // sarsync.com/w/<slug>
+  name      String
+  hue       Int      @default(220)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  departments Department[]
+  teams       Team[]
+  memberships Membership[]
+  boards      Board[]
+  invites     Invite[]
+}
+
+model Department {
+  id          String  @id @default(cuid())
+  workspaceId String
+  name        String          // English / canonical name
+  nameAr      String?         // Arabic name (optional — falls back to name)
+  icon        String?
+  hue         Int     @default(220)
+  headId      String? // memberships.id
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  teams     Team[]
+  boards    Board[]
+  members   Membership[]
+  media     MediaItem[]
+  chatMessages ChatMessage[]
+
+  @@index([workspaceId])
+}
+
+// Per-user "last read" timestamp for a department's chat. Drives the
+// unread badge in the sidebar. Updated on chat tab open and after each
+// message the user sends.
+model ChatRead {
+  departmentId String
+  userId       String
+  lastReadAt   DateTime @default(now()) @updatedAt
+
+  @@id([departmentId, userId])
+  @@index([userId])
+}
+
+// Department-scoped group chat. Visibility: dept members + admins (same
+// as media library). Author can edit within 15 min. Delete is soft —
+// marks deletedAt so other clients can render as "[deleted]".
+model ChatMessage {
+  id            String   @id @default(cuid())
+  departmentId  String
+  authorId      String
+  body          String   // text content (may be empty when media-only)
+  kind          String   @default("text")  // 'text' | 'image' | 'file' | 'voice'
+  attachmentId  String?  @unique
+  createdAt     DateTime @default(now())
+  editedAt      DateTime?
+  deletedAt     DateTime?
+
+  department  Department      @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  author      User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  attachment  ChatAttachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+
+  @@index([departmentId, createdAt])
+  @@index([authorId])
+}
+
+// Files attached to chat messages. Lives separately from MediaItem (the
+// dept library) — chat attachments are scoped to a single message.
+model ChatAttachment {
+  id          String   @id @default(cuid())
+  filename    String
+  mimeType    String
+  sizeBytes   Int
+  durationMs  Int?     // voice messages
+  s3Key       String
+  thumbS3Key  String?  // for images
+  createdAt   DateTime @default(now())
+
+  message     ChatMessage?
+}
+
+// Department-scoped media library: shared files for the whole dept.
+// Visibility: dept members + admins. Delete: uploader + dept head + admins.
+// Thumbnails are generated for images on upload.
+model MediaItem {
+  id           String   @id @default(cuid())
+  departmentId String
+  uploadedById String
+  title        String   // display name (separate from filename — renameable)
+  filename     String   // original filename
+  mimeType     String
+  sizeBytes    Int
+  s3Key        String   // local storage relative path (or S3 key in prod)
+  thumbS3Key   String?  // generated thumbnail (images only, ≤320px)
+  createdAt    DateTime @default(now())
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  uploadedBy User       @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([departmentId, createdAt])
+  @@index([uploadedById])
+}
+
+model Team {
+  id           String  @id @default(cuid())
+  workspaceId  String
+  departmentId String
+  name         String          // English / canonical name
+  nameAr       String?         // Arabic name (optional — falls back to name)
+  leadId       String? // memberships.id
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  members    Membership[]
+  boards     Board[]
+
+  @@index([workspaceId])
+  @@index([departmentId])
+}
+
+enum Role {
+  admin
+  dept_manager
+  team_lead
+  member
+  guest
+}
+
+// A Membership is the join between User and Workspace, plus role/dept/team.
+// The same User can be in multiple workspaces with different roles.
+model Membership {
+  id           String  @id @default(cuid())
+  userId       String
+  workspaceId  String
+  role         Role    @default(member)
+  departmentId String?
+  teamId       String?
+  joinedAt     DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  department  Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  team        Team?       @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@index([departmentId])
+  @@index([teamId])
+}
+
+model Invite {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  email        String
+  role         Role     @default(member)
+  departmentId String?
+  teamId       String?
+  invitedById  String
+  tokenHash    String   @unique
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User      @relation("invited_by", fields: [invitedById], references: [id])
+
+  @@index([workspaceId])
+  @@index([email])
+}
+
+// ── Boards ─────────────────────────────────────────────────────────────────
+
+model Board {
+  id            String  @id @default(cuid())
+  workspaceId   String
+  departmentId  String?
+  teamId        String?
+  title         String
+  subtitle      String?
+  hue           Int     @default(220)
+  archivedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  team       Team?       @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  lists      List[]
+  activity   Activity[]
+  labels     Label[]
+  // Explicit per-board access for users outside the board's department.
+  // Auto-created when a card on this board gets assigned to a user without
+  // base dept access.
+  boardMembers BoardMember[]
+  // Per-user stars (favorites) — independent of access.
+  stars        BoardStar[]
+
+  @@index([workspaceId])
+  @@index([departmentId])
+  @@index([teamId])
+}
+
+// Per-user board favorite. Star is a viewer-side preference, not a board
+// attribute — one user starring a board does not affect anyone else's view.
+model BoardStar {
+  boardId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([boardId, userId])
+  @@index([userId])
+}
+
+// Grants a user explicit access to a board, even if they're not in its
+// department. Created automatically when a user is assigned to a card on a
+// board they don't already have access to.
+model BoardMember {
+  boardId String
+  userId  String
+  addedAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([boardId, userId])
+  @@index([userId])
+}
+
+model List {
+  id        String  @id @default(cuid())
+  boardId   String
+  title     String
+  position  Float   // fractional indexing (no reflow on reorder)
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards Card[]
+
+  @@index([boardId])
+  @@index([boardId, position])
+}
+
+model Card {
+  id                  String  @id @default(cuid())
+  listId              String
+  title               String
+  description         String?
+  position            Float   // fractional index within list
+  due                 DateTime?
+  // Decorative striped placeholder (legacy cover) — used when no real image
+  coverHue            Int?
+  coverLabel          String?
+  // Real cover image (links to an Attachment row owned by this card)
+  coverAttachmentId   String?
+  createdById         String?
+  // Explicit completion (Asana/Linear pattern). archivedAt is for hiding from
+  // boards; completedAt is the metric for KPIs.
+  completedAt         DateTime?
+  completedById       String?
+  archivedAt          DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  list        List         @relation(fields: [listId], references: [id], onDelete: Cascade)
+  createdBy   User?        @relation("card_created_by", fields: [createdById], references: [id])
+  members     CardMember[]
+  labels      CardLabel[]
+  checklist   ChecklistItem[]
+  comments    Comment[]
+  attachments Attachment[]
+
+  @@index([listId])
+  @@index([listId, position])
+}
+
+model CardMember {
+  cardId    String
+  userId    String
+  addedAt   DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, userId])
+  @@index([userId])
+}
+
+model Label {
+  id      String @id @default(cuid())
+  boardId String
+  name    String
+  color   String  // hex
+  bg      String  // hex (light bg)
+
+  board Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards CardLabel[]
+
+  @@index([boardId])
+}
+
+model CardLabel {
+  cardId  String
+  labelId String
+
+  card  Card  @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, labelId])
+  @@index([labelId])
+}
+
+model ChecklistItem {
+  id        String  @id @default(cuid())
+  cardId    String
+  text      String
+  done      Boolean @default(false)
+  position  Float
+  createdAt DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId])
+}
+
+model Comment {
+  id        String  @id @default(cuid())
+  cardId    String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  editedAt  DateTime?
+
+  card   Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([cardId])
+  @@index([authorId])
+}
+
+model Attachment {
+  id           String  @id @default(cuid())
+  cardId       String
+  uploadedById String
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  s3Key        String  // S3 object key (or local path in dev)
+  createdAt    DateTime @default(now())
+
+  card       Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  uploadedBy User @relation("attachment_uploaded_by", fields: [uploadedById], references: [id])
+
+  @@index([cardId])
+}
+
+// ── Activity log (per board) ───────────────────────────────────────────────
+
+model Activity {
+  id        String   @id @default(cuid())
+  boardId   String
+  actorId   String
+  verb      String   // 'moved' | 'created' | 'commented' | 'attached' | 'completed' | 'edited'
+  targetType String  // 'card' | 'list' | 'comment'
+  targetId   String
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  actor User  @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([boardId, createdAt])
+  @@index([actorId])
+}

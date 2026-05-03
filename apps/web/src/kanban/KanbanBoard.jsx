@@ -1,0 +1,227 @@
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { List } from './List.jsx';
+import { Icon } from '../ui/Icon.jsx';
+import { AvatarStack } from '../ui/Avatar.jsx';
+import { useBoardData } from '../state/BoardDataContext.jsx';
+import { iconBtn, pillBtn } from '../ui/theme.js';
+import { Popover } from '../ui/Popover.jsx';
+
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onDeleteBoard, canDelete, onAddCardToFirstList }) {
+  const ctx = useBoardData();
+  const navigate = useNavigate();
+  const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
+  const moreRef = React.useRef(null);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [renaming, setRenaming] = React.useState(false);
+  const [name, setName] = React.useState(board.title);
+
+  React.useEffect(() => { setName(board.title); }, [board.title]);
+
+  const onStar = async () => {
+    try { await onToggleStar?.(); } catch (err) { alert(err.message); }
+  };
+  const submitRename = async () => {
+    const t = name.trim();
+    if (!t || t === board.title) { setRenaming(false); return; }
+    try { await onUpdateBoard?.({ title: t }); } catch (err) { alert(err.message); }
+    setRenaming(false);
+  };
+  const onArchive = async () => {
+    if (!confirm(rtl ? 'أرشفة اللوحة؟ ستختفي من قائمة اللوحات.' : 'Archive this board? It will be hidden from the boards list.')) return;
+    try {
+      await onArchiveBoard?.();
+      navigate('/boards');
+    } catch (err) { alert(err.message); }
+  };
+  const onDelete = async () => {
+    if (!confirm(rtl ? 'حذف اللوحة نهائيًا؟ لا يمكن التراجع.' : 'Permanently delete this board? This cannot be undone.')) return;
+    try {
+      await onDeleteBoard?.();
+      navigate('/boards');
+    } catch (err) { alert(err.message); }
+  };
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '14px 24px 12px', flexShrink: 0,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {renaming && canManage ? (
+          <input autoFocus value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={submitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); submitRename(); }
+              if (e.key === 'Escape') { setName(board.title); setRenaming(false); }
+            }}
+            style={{
+              fontSize: 20, fontWeight: 700, color: theme.text,
+              background: theme.surface, border: `1px solid ${theme.accent}`,
+              borderRadius: 4, padding: '2px 8px', outline: 'none',
+              fontFamily: 'inherit', minWidth: 240,
+            }} />
+        ) : (
+          <h2 onDoubleClick={() => canManage && setRenaming(true)}
+            title={canManage ? (rtl ? 'انقر مرتين للتعديل' : 'Double-click to rename') : undefined}
+            style={{
+              margin: 0, fontSize: 20, fontWeight: 700, color: theme.text,
+              letterSpacing: '-.015em',
+              cursor: canManage ? 'text' : 'default',
+              userSelect: 'none',
+            }}>{board.title}</h2>
+        )}
+        <button onClick={onStar} style={{ ...iconBtn(theme), color: board.starred ? theme.accent : theme.muted }}
+          title={board.starred ? (rtl ? 'إلغاء التفضيل' : 'Unstar') : (rtl ? 'تفضيل' : 'Star')}>
+          <Icon.star filled={board.starred} size={16} />
+        </button>
+        <span style={{
+          fontSize: 11, fontWeight: 600,
+          color: theme.muted,
+          background: theme.surface2,
+          padding: '3px 8px', borderRadius: 5,
+          border: `.5px solid ${theme.border}`,
+        }}>{rtl ? 'مرئي للفريق' : 'Team visible'}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {showAvatars && memberIds.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', marginInlineEnd: 6 }}>
+            <AvatarStack ids={memberIds} size={26} max={5} ringColor={theme.boardBg} />
+          </div>
+        )}
+        <button style={pillBtn(theme)}>
+          <Icon.filter /> {rtl ? 'تصفية' : 'Filter'}
+        </button>
+        {(canManage || canDelete) && (
+          <button ref={moreRef} onClick={() => setMenuOpen((v) => !v)} style={pillBtn(theme)}>
+            <Icon.more />
+          </button>
+        )}
+        {onAddCardToFirstList && (
+          <button onClick={onAddCardToFirstList} style={{
+            ...pillBtn(theme),
+            background: theme.accent, color: theme.accentText, border: 'none', fontWeight: 600,
+          }}>
+            <Icon.plus /> {rtl ? 'بطاقة جديدة' : 'New card'}
+          </button>
+        )}
+        <Popover anchorRef={moreRef} open={menuOpen} onClose={() => setMenuOpen(false)} theme={theme} width={200} align="end">
+          {canManage && (
+            <MenuItem theme={theme} onClick={() => { setMenuOpen(false); setRenaming(true); }}>
+              {rtl ? 'تعديل الاسم' : 'Rename board'}
+            </MenuItem>
+          )}
+          {canManage && (
+            <MenuItem theme={theme} onClick={() => { setMenuOpen(false); onArchive(); }}>
+              {rtl ? 'أرشفة' : 'Archive board'}
+            </MenuItem>
+          )}
+          {canDelete && (
+            <MenuItem theme={theme} danger onClick={() => { setMenuOpen(false); onDelete(); }}>
+              {rtl ? 'حذف نهائي' : 'Delete permanently'}
+            </MenuItem>
+          )}
+        </Popover>
+      </div>
+    </div>
+  );
+}
+
+function MenuItem({ theme, onClick, danger, children }) {
+  return (
+    <button onClick={onClick} style={{
+      width: '100%', padding: '8px 10px', borderRadius: 5,
+      background: 'transparent', border: 'none', cursor: 'pointer',
+      fontSize: 13, fontWeight: 500,
+      color: danger ? '#DC2626' : theme.text,
+      textAlign: 'start', fontFamily: 'inherit',
+    }}
+    onMouseEnter={(e) => e.currentTarget.style.background = theme.surface2}
+    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+      {children}
+    </button>
+  );
+}
+
+export function KanbanBoard({ theme, lists, density, showAvatars, rtl, canEdit, onCardClick, onAddCard, onAddList, onRenameList, onDeleteList }) {
+  const [adding, setAdding] = React.useState(false);
+  const [text, setText] = React.useState('');
+
+  const submit = async () => {
+    const t = text.trim();
+    if (!t) { setAdding(false); setText(''); return; }
+    try {
+      await onAddList?.(t);
+      setText('');
+      setAdding(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <div style={{
+      flex: 1, minHeight: 0,
+      display: 'flex', gap: 14,
+      padding: '4px 24px 24px',
+      overflowX: 'auto', overflowY: 'hidden',
+      direction: rtl ? 'rtl' : 'ltr',
+    }}>
+      {lists.map((list) => (
+        <List key={list.id} list={list} theme={theme}
+          density={density} showAvatars={showAvatars}
+          canEdit={canEdit}
+          onCardClick={onCardClick} onAddCard={onAddCard}
+          onRename={onRenameList} onDelete={onDeleteList} rtl={rtl} />
+      ))}
+      {!canEdit ? null : adding ? (
+        <div style={{
+          flexShrink: 0, width: 290,
+          background: theme.list, borderRadius: theme.radius,
+          boxShadow: theme.shadow, padding: 10, alignSelf: 'flex-start',
+        }}>
+          <input
+            autoFocus
+            value={text}
+            placeholder={rtl ? 'اسم القائمة' : 'List title'}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); submit(); }
+              if (e.key === 'Escape') { setText(''); setAdding(false); }
+            }}
+            style={{
+              width: '100%', padding: '8px 10px',
+              background: theme.card, color: theme.text,
+              border: `.5px solid ${theme.border}`, borderRadius: 6,
+              fontSize: 13, fontFamily: 'inherit', outline: 'none',
+            }} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <button onClick={submit} style={{
+              background: theme.accent, color: theme.accentText, border: 'none',
+              padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              cursor: 'pointer',
+            }}>{rtl ? 'إضافة' : 'Add list'}</button>
+            <button onClick={() => { setText(''); setAdding(false); }} style={{
+              background: 'transparent', color: theme.muted, border: 'none',
+              padding: '5px 8px', cursor: 'pointer', fontSize: 14,
+            }}>×</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setAdding(true)} style={{
+          flexShrink: 0, width: 290,
+          background: theme.name === 'dark' ? 'rgba(255,255,255,.03)' : 'rgba(0,0,0,.03)',
+          border: 'none', borderRadius: theme.radius,
+          padding: '12px 14px',
+          display: 'flex', alignItems: 'center', gap: 6,
+          color: theme.muted, fontSize: 13, fontWeight: 500,
+          cursor: 'pointer', alignSelf: 'flex-start',
+          fontFamily: 'inherit',
+        }}>
+          <Icon.plus /> {rtl ? 'إضافة قائمة' : 'Add another list'}
+        </button>
+      )}
+    </div>
+  );
+}
