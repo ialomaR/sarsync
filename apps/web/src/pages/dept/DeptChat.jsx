@@ -1,5 +1,5 @@
 import React from 'react';
-import { api, getAccessToken } from '../../lib/api.js';
+import { api, getAccessToken, saveChatAttachmentToMedia } from '../../lib/api.js';
 import { Avatar } from '../../ui/Avatar.jsx';
 import { Icon } from '../../ui/Icon.jsx';
 import { useAuth } from '../../state/AuthContext.jsx';
@@ -612,17 +612,22 @@ function Bubble({ theme, rtl, msg, myId, mentionableMembers, isMine, isFirstInGr
                 </div>
               )}
               {msg.attachment && msg.attachment.isImage && (
-                <a href={withToken(msg.attachment.url)} target="_blank" rel="noreferrer" style={{
-                  display: 'block', overflow: 'hidden',
-                  borderRadius: 12, marginTop: msg.body ? 6 : 0,
-                }}>
-                  <img src={withToken(msg.attachment.thumbUrl || msg.attachment.url)}
-                    alt={msg.attachment.filename}
-                    style={{ display: 'block', maxWidth: 280, maxHeight: 280, width: 'auto', height: 'auto' }} />
-                </a>
+                <div style={{ position: 'relative', marginTop: msg.body ? 6 : 0 }}>
+                  <a href={withToken(msg.attachment.url)} target="_blank" rel="noreferrer" style={{
+                    display: 'block', overflow: 'hidden', borderRadius: 12,
+                  }}>
+                    <img src={withToken(msg.attachment.thumbUrl || msg.attachment.url)}
+                      alt={msg.attachment.filename}
+                      style={{ display: 'block', maxWidth: 280, maxHeight: 280, width: 'auto', height: 'auto' }} />
+                  </a>
+                  <SaveToMediaButton theme={theme} rtl={rtl} att={msg.attachment} />
+                </div>
               )}
               {msg.attachment && !msg.attachment.isImage && !msg.attachment.durationMs && (
-                <FileChip theme={theme} rtl={rtl} isMine={isMine} att={msg.attachment} />
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <FileChip theme={theme} rtl={rtl} isMine={isMine} att={msg.attachment} />
+                  <SaveToMediaButton theme={theme} rtl={rtl} att={msg.attachment} />
+                </div>
               )}
               <div style={{
                 fontSize: 10, color: subtleFg,
@@ -660,6 +665,41 @@ function Bubble({ theme, rtl, msg, myId, mentionableMembers, isMine, isFirstInGr
         </div>
       )}
     </div>
+  );
+}
+
+// Hover-to-reveal pill that copies a chat attachment into the dept's media
+// library. Idempotent on the UI side: once clicked, switches to ✓ saved.
+function SaveToMediaButton({ theme, rtl, att }) {
+  const [state, setState] = React.useState('idle'); // 'idle' | 'busy' | 'done' | 'err'
+  const onClick = async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (state === 'busy' || state === 'done') return;
+    setState('busy');
+    try {
+      await saveChatAttachmentToMedia(att.id);
+      setState('done');
+    } catch (err) {
+      setState('err');
+      alert(err.message);
+    }
+  };
+  const label =
+    state === 'done' ? (rtl ? '✓ محفوظ في الميديا' : '✓ Saved to media')
+  : state === 'busy' ? (rtl ? 'جاري الحفظ…' : 'Saving…')
+  : (rtl ? 'حفظ في الميديا' : 'Save to media');
+  return (
+    <button onClick={onClick} title={label} style={{
+      position: 'absolute', top: 6, insetInlineEnd: 6,
+      padding: '3px 8px', borderRadius: 999,
+      background: state === 'done' ? '#0E7C66' : 'rgba(0,0,0,.55)',
+      color: '#fff', border: 'none',
+      fontSize: 10.5, fontWeight: 600,
+      cursor: state === 'done' ? 'default' : 'pointer',
+      fontFamily: 'inherit',
+      backdropFilter: 'blur(4px)',
+    }}>{label}</button>
   );
 }
 

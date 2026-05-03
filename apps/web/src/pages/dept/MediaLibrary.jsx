@@ -44,17 +44,19 @@ export function MediaLibrary({ theme, rtl, deptId }) {
   const [dragActive, setDragActive] = React.useState(false);
   const dragCounter = React.useRef(0);
   const fileInputRef = React.useRef(null);
+  const [sourceFilter, setSourceFilter] = React.useState('all'); // 'all' | 'upload' | 'chat'
 
   const load = React.useCallback(async () => {
     try {
-      const r = await api(`/departments/${deptId}/media`);
+      const qs = sourceFilter === 'all' ? '' : `?source=${sourceFilter}`;
+      const r = await api(`/departments/${deptId}/media${qs}`);
       setItems(r.items || []);
       setStatus('ready');
     } catch (err) {
       setError(err);
       setStatus('error');
     }
-  }, [deptId]);
+  }, [deptId, sourceFilter]);
 
   React.useEffect(() => { load(); }, [load]);
 
@@ -184,6 +186,31 @@ export function MediaLibrary({ theme, rtl, deptId }) {
             <Icon.plus size={12} /> {rtl ? 'رفع ملف' : 'Upload file'}
           </button>
         </div>
+      </div>
+
+      {/* Source filter tabs (All / Uploaded / Chat files) */}
+      <div style={{
+        display: 'flex', gap: 2, marginBottom: 12,
+        background: theme.surface, padding: 2, borderRadius: 7,
+        border: `.5px solid ${theme.border}`, alignSelf: 'flex-start',
+        width: 'fit-content',
+      }}>
+        {[
+          { id: 'all',    label: rtl ? 'الكل' : 'All' },
+          { id: 'upload', label: rtl ? 'رفع مباشر' : 'Uploaded' },
+          { id: 'chat',   label: rtl ? 'ملفات المحادثات' : 'From chat' },
+        ].map((t) => {
+          const active = t.id === sourceFilter;
+          return (
+            <button key={t.id} onClick={() => setSourceFilter(t.id)} style={{
+              padding: '5px 12px', borderRadius: 5,
+              background: active ? theme.accentSoft : 'transparent',
+              color: active ? theme.accent : theme.muted,
+              border: 'none', cursor: active ? 'default' : 'pointer',
+              fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+            }}>{t.label}</button>
+          );
+        })}
       </div>
 
       {status === 'loading' && (

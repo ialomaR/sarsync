@@ -59,17 +59,21 @@ export async function mediaRoutes(app: FastifyInstance) {
   });
 
   // List media items for a department (newest first, paginated).
-  app.get<{ Params: { id: string }; Querystring: { limit?: string; before?: string } }>('/departments/:id/media', async (request, reply) => {
+  // Optional `?source=upload|chat` filter for the "Chat files" tab.
+  app.get<{ Params: { id: string }; Querystring: { limit?: string; before?: string; source?: string } }>('/departments/:id/media', async (request, reply) => {
     const v = await deptViewerMembership(request.userId!, request.params.id);
     if (!v.allowed) return reply.code(403).send({ error: 'forbidden', message: 'No access to this department' });
 
     const limit = Math.min(parseInt(request.query.limit || '60', 10), 200);
     const before = request.query.before ? new Date(request.query.before) : null;
+    const sourceFilter = request.query.source === 'upload' || request.query.source === 'chat'
+      ? request.query.source : null;
 
     const items = await prisma.mediaItem.findMany({
       where: {
         departmentId: request.params.id,
         ...(before ? { createdAt: { lt: before } } : {}),
+        ...(sourceFilter ? { source: sourceFilter } : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
@@ -91,6 +95,7 @@ export async function mediaRoutes(app: FastifyInstance) {
         isImage: IMAGE_MIMES.has(m.mimeType),
         url: `/api/media/${m.id}/file`,
         thumbUrl: m.thumbS3Key ? `/api/media/${m.id}/thumb` : null,
+        source: m.source,
         createdAt: m.createdAt.toISOString(),
         uploadedBy: {
           id: m.uploadedBy.id,

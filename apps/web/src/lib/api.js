@@ -217,3 +217,7 @@ export async function issueResetForUser(email) {
 export async function deleteSystemWorkspace(id) {
   return api(`/system/workspaces/${id}`, { method: 'DELETE' });
 }
+
+export async function saveChatAttachmentToMedia(attachmentId) {
+  return api(`/chat/attachments/${attachmentId}/save-to-media`, { method: 'POST' });
+}

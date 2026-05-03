@@ -23,6 +23,9 @@ function extractMentions(body: string): string[] {
 }
 
 const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'chat');
+// Media library uses a parallel directory; we copy chat files into it when
+// the user clicks "Save to media library".
+const MEDIA_UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'media');
 const MAX_BYTES = 100 * 1024 * 1024; // 100 MB — same as media library
 // 2 minutes — short enough that the chat reads as an audit trail, long
 // enough to fix typos. Applies to both edits and self-deletes. Department
@@ -442,6 +445,70 @@ export async function chatRoutes(app: FastifyInstance) {
       durationMs: att.durationMs,
       url: `/api/chat/attachments/${att.id}/file`,
       thumbUrl: att.thumbS3Key ? `/api/chat/attachments/${att.id}/thumb` : null,
+    });
+  });
+
+  // ── Save a chat attachment into the dept's media library ───────────────
+  // Copies the file (and thumbnail, if any) to the media directory and
+  // creates a MediaItem with source='chat'. Voice messages are excluded —
+  // they're conversational, not documents.
+
+  app.post<{ Params: { id: string } }>('/chat/attachments/:id/save-to-media', async (request, reply) => {
+    const att = await prisma.chatAttachment.findUnique({
+      where: { id: request.params.id },
+      include: { message: { select: { departmentId: true } } },
+    });
+    if (!att || !att.message) return reply.code(404).send({ error: 'not_found', message: 'Attachment not found' });
+    if (att.durationMs) {
+      return reply.code(400).send({ error: 'voice_excluded', message: 'Voice messages cannot be saved to the media library' });
+    }
+    const v = await deptMembership(request.userId!, att.message.departmentId);
+    if (!v) return reply.code(403).send({ error: 'forbidden', message: 'No access to this department' });
+
+    const ext = path.extname(att.s3Key);
+    const newKey = `${crypto.randomBytes(12).toString('hex')}${ext}`;
+    const newRel = `${att.message.departmentId}/${newKey}`;
+    const deptDir = path.join(MEDIA_UPLOAD_ROOT, att.message.departmentId);
+    await ensureDir(deptDir);
+
+    const src = path.join(UPLOAD_ROOT, att.s3Key);
+    const dst = path.join(MEDIA_UPLOAD_ROOT, newRel);
+    await fs.copyFile(src, dst);
+
+    let thumbRel: string | null = null;
+    if (att.thumbS3Key) {
+      const thumbName = `${path.basename(newKey, ext)}_thumb.webp`;
+      thumbRel = `${att.message.departmentId}/${thumbName}`;
+      const thumbSrc = path.join(UPLOAD_ROOT, att.thumbS3Key);
+      const thumbDst = path.join(MEDIA_UPLOAD_ROOT, thumbRel);
+      try { await fs.copyFile(thumbSrc, thumbDst); }
+      catch { thumbRel = null; }
+    }
+
+    const media = await prisma.mediaItem.create({
+      data: {
+        departmentId: att.message.departmentId,
+        uploadedById: request.userId!,
+        title: att.filename,
+        filename: att.filename,
+        mimeType: att.mimeType,
+        sizeBytes: att.sizeBytes,
+        s3Key: newRel,
+        thumbS3Key: thumbRel,
+        source: 'chat',
+      },
+    });
+
+    return reply.code(201).send({
+      id: media.id,
+      title: media.title,
+      filename: media.filename,
+      mimeType: media.mimeType,
+      sizeBytes: media.sizeBytes,
+      isImage: IMAGE_MIMES.has(media.mimeType),
+      url: `/api/media/${media.id}/file`,
+      thumbUrl: media.thumbS3Key ? `/api/media/${media.id}/thumb` : null,
+      source: media.source,
     });
   });
 

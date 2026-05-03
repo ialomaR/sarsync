@@ -261,6 +261,10 @@ model MediaItem {
   sizeBytes    Int
   s3Key        String   // local storage relative path (or S3 key in prod)
   thumbS3Key   String?  // generated thumbnail (images only, ≤320px)
+  // Where this item entered the library: 'upload' (direct media upload) or
+  // 'chat' (saved from a department chat attachment). Drives the filter
+  // tabs in the media UI.
+  source       String   @default("upload")
   createdAt    DateTime @default(now())
 
   department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
