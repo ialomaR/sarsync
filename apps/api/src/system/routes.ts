@@ -97,4 +97,78 @@ export async function systemRoutes(app: FastifyInstance) {
     await prisma.workspace.delete({ where: { id: ws.id } });
     return reply.code(204).send();
   });
+
+  // ── Users management ─────────────────────────────────────────────────────
+
+  app.get('/system/users', async (_request, reply) => {
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, email: true, firstName: true, lastName: true,
+        avatarColor: true, emailVerified: true,
+        twoFactorEnabled: true, isSystemAdmin: true,
+        suspendedAt: true, createdAt: true,
+        memberships: {
+          select: {
+            role: true,
+            workspace: { select: { id: true, name: true, slug: true } },
+            department: { select: { name: true, nameAr: true } },
+          },
+        },
+      },
+    });
+    return reply.send({
+      users: users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: `${u.firstName} ${u.lastName}`.trim(),
+        avatarColor: u.avatarColor,
+        emailVerified: !!u.emailVerified,
+        twoFactorEnabled: u.twoFactorEnabled,
+        isSystemAdmin: u.isSystemAdmin,
+        suspended: !!u.suspendedAt,
+        suspendedAt: u.suspendedAt ? u.suspendedAt.toISOString() : null,
+        createdAt: u.createdAt.toISOString(),
+        memberships: u.memberships.map((m) => ({
+          role: m.role,
+          workspaceName: m.workspace.name,
+          workspaceSlug: m.workspace.slug,
+          department: m.department ? (m.department.nameAr || m.department.name) : null,
+        })),
+      })),
+    });
+  });
+
+  // Suspend an account. Refuses to suspend other system admins (a system
+  // admin can revoke their own admin via env, but can't take a peer down).
+  app.post<{ Params: { id: string } }>('/system/users/:id/suspend', async (request, reply) => {
+    if (request.params.id === request.userId) {
+      return reply.code(400).send({ error: 'self_suspend', message: 'You cannot suspend your own account' });
+    }
+    const target = await prisma.user.findUnique({ where: { id: request.params.id } });
+    if (!target) return reply.code(404).send({ error: 'not_found' });
+    if (target.isSystemAdmin) {
+      return reply.code(403).send({ error: 'cannot_suspend_admin', message: 'Cannot suspend another platform admin. Remove them from SYSTEM_ADMIN_EMAILS first.' });
+    }
+    if (target.suspendedAt) return reply.send({ ok: true, alreadySuspended: true });
+
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: target.id }, data: { suspendedAt: new Date() } }),
+      // Revoke every outstanding refresh token so existing sessions can't
+      // extend past the next ~15 minutes (access token TTL).
+      prisma.refreshToken.updateMany({
+        where: { userId: target.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+    return reply.send({ ok: true });
+  });
+
+  app.post<{ Params: { id: string } }>('/system/users/:id/unsuspend', async (request, reply) => {
+    const target = await prisma.user.findUnique({ where: { id: request.params.id } });
+    if (!target) return reply.code(404).send({ error: 'not_found' });
+    if (!target.suspendedAt) return reply.send({ ok: true, alreadyActive: true });
+    await prisma.user.update({ where: { id: target.id }, data: { suspendedAt: null } });
+    return reply.send({ ok: true });
+  });
 }

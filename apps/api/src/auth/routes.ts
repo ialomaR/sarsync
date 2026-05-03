@@ -171,6 +171,16 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: 'invalid_credentials', message: 'Email or password is incorrect' });
     }
 
+    // Suspended accounts cannot sign in until a system admin reactivates.
+    // We respond with a distinct error so the UI can show a clear message
+    // — no enumeration risk since we already verified credentials.
+    if (user.suspendedAt) {
+      return reply.code(403).send({
+        error: 'account_suspended',
+        message: 'This account has been suspended. Contact a platform administrator.',
+      });
+    }
+
     // Auto-promote to platform admin if the email matches the env list
     // (re-checked each signin so that adding/removing emails takes effect
     // without requiring a redeploy).
@@ -211,6 +221,12 @@ export async function authRoutes(app: FastifyInstance) {
       });
       const user = await prisma.user.findUnique({ where: { id: next.userId } });
       if (!user) return reply.code(401).send({ error: 'invalid_token', message: 'User no longer exists' });
+      // Suspended after the original signin? Reject immediately so the
+      // session can't be extended. Refresh tokens are also explicitly
+      // revoked on suspend, so this is a belt-and-suspenders check.
+      if (user.suspendedAt) {
+        return reply.code(403).send({ error: 'account_suspended', message: 'Account has been suspended' });
+      }
       const accessToken = signAccessToken(user);
       const memberships = await loadMembershipSummaries(user.id);
       return reply.send({

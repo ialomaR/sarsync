@@ -221,3 +221,13 @@ export async function deleteSystemWorkspace(id) {
 export async function saveChatAttachmentToMedia(attachmentId) {
   return api(`/chat/attachments/${attachmentId}/save-to-media`, { method: 'POST' });
 }
+
+export async function fetchSystemUsers() {
+  return api('/system/users');
+}
+export async function suspendUser(id) {
+  return api(`/system/users/${id}/suspend`, { method: 'POST' });
+}
+export async function unsuspendUser(id) {
+  return api(`/system/users/${id}/unsuspend`, { method: 'POST' });
+}

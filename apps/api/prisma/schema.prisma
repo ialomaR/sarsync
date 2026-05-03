@@ -36,6 +36,9 @@ model User {
   // visibility + ability to issue password resets for any user. Distinct
   // from Membership.role=admin which is workspace-scoped.
   isSystemAdmin Boolean  @default(false)
+  // When set, the user cannot sign in. Existing sessions are revoked on
+  // suspend (all refresh tokens marked revoked). Cleared on unsuspend.
+  suspendedAt   DateTime?
   // ── 2FA (TOTP) ────────────────────────────────────────────────
   twoFactorEnabled     Boolean @default(false)
   twoFactorSecret      String? // base32-encoded TOTP secret
