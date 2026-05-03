@@ -4,7 +4,7 @@ import { AppShell } from '../kanban/AppShell.jsx';
 import { Avatar } from '../ui/Avatar.jsx';
 import { useSettings } from '../state/SettingsContext.jsx';
 import { buildTheme } from '../ui/theme.js';
-import { api, setup2FA, enable2FA, disable2FA, regenerateBackupCodes, resendVerificationEmail } from '../lib/api.js';
+import { api, setup2FA, enable2FA, disable2FA, regenerateBackupCodes, resendVerificationEmail, changePassword } from '../lib/api.js';
 import { localizedName } from '../lib/i18n.js';
 import { formatRelative } from '../lib/normalize.js';
 import { LoadingScreen, StateScreen } from '../ui/States.jsx';
@@ -105,8 +105,102 @@ function SecurityPanel({ theme, rtl }) {
       </div>
       <EmailVerifyRow theme={theme} rtl={rtl} me={me} onChange={refresh} />
       <div style={{ height: 1, background: theme.border, margin: '12px -2px' }} />
+      <ChangePasswordRow theme={theme} rtl={rtl} />
+      <div style={{ height: 1, background: theme.border, margin: '12px -2px' }} />
       <TwoFactorRow theme={theme} rtl={rtl} me={me} onChange={refresh} />
     </div>
+  );
+}
+
+function ChangePasswordRow({ theme, rtl }) {
+  const [open, setOpen] = React.useState(false);
+  const [current, setCurrent] = React.useState('');
+  const [next, setNext] = React.useState('');
+  const [confirm, setConfirm] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const [done, setDone] = React.useState(false);
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    setErr(null);
+    if (next !== confirm) { setErr(rtl ? 'كلمتا المرور غير متطابقتين' : 'New passwords don’t match'); return; }
+    setBusy(true);
+    try {
+      await changePassword(current, next);
+      setDone(true);
+      setCurrent(''); setNext(''); setConfirm('');
+      setTimeout(() => { setDone(false); setOpen(false); }, 2000);
+    } catch (e2) {
+      setErr(e2.message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+            {rtl ? 'كلمة المرور' : 'Password'}
+          </div>
+          <div style={{ fontSize: 11.5, color: theme.muted, marginTop: 2 }}>
+            {rtl ? 'تغيير كلمة المرور سيُسجّل خروجك من جميع الأجهزة الأخرى.' : 'Changing your password signs you out everywhere else.'}
+          </div>
+        </div>
+        <button onClick={() => setOpen((v) => !v)} style={{
+          padding: '6px 12px', borderRadius: 6,
+          background: open ? theme.surface2 : theme.accent,
+          color: open ? theme.text : theme.accentText,
+          border: open ? `.5px solid ${theme.border}` : 'none',
+          fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+        }}>{open ? (rtl ? 'إلغاء' : 'Cancel') : (rtl ? 'تغيير' : 'Change')}</button>
+      </div>
+
+      {open && (
+        <form onSubmit={submit} style={{
+          marginTop: 12, padding: 14,
+          background: theme.bg, border: `.5px solid ${theme.border}`,
+          borderRadius: theme.cardRadius,
+          display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 380,
+        }}>
+          <PasswordInput theme={theme} rtl={rtl} value={current} onChange={setCurrent}
+            placeholder={rtl ? 'كلمة المرور الحالية' : 'Current password'} autoFocus />
+          <PasswordInput theme={theme} rtl={rtl} value={next} onChange={setNext}
+            placeholder={rtl ? 'كلمة المرور الجديدة' : 'New password'} />
+          <PasswordInput theme={theme} rtl={rtl} value={confirm} onChange={setConfirm}
+            placeholder={rtl ? 'تأكيد كلمة المرور الجديدة' : 'Confirm new password'} />
+          {err && (
+            <div style={{ fontSize: 11.5, color: '#DC2626' }}>{err}</div>
+          )}
+          {done && (
+            <div style={{ fontSize: 11.5, color: '#0E7C66' }}>
+              {rtl ? '✓ تم تحديث كلمة المرور' : '✓ Password updated'}
+            </div>
+          )}
+          <button type="submit" disabled={busy || !current || !next || !confirm} style={{
+            padding: '7px 14px', borderRadius: 6,
+            background: theme.accent, color: theme.accentText,
+            border: 'none', fontSize: 12.5, fontWeight: 600,
+            cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            alignSelf: rtl ? 'flex-start' : 'flex-end',
+          }}>{busy ? '…' : (rtl ? 'تحديث' : 'Update')}</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function PasswordInput({ theme, rtl, value, onChange, placeholder, autoFocus }) {
+  return (
+    <input type="password" value={value} onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder} autoFocus={autoFocus}
+      style={{
+        padding: '8px 10px', fontSize: 13,
+        background: theme.surface, color: theme.text,
+        border: `1px solid ${theme.border}`, borderRadius: 6,
+        outline: 'none', fontFamily: 'inherit',
+        direction: rtl ? 'rtl' : 'ltr',
+      }} />
   );
 }
 

@@ -7,6 +7,7 @@ import { Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { verifyAccessToken } from '../auth/tokens.js';
+import { optimizeImageInPlace } from '../lib/optimize.js';
 
 const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'media');
 const MAX_BYTES = 100 * 1024 * 1024; // 100 MB — global standard for collaboration tools
@@ -142,9 +143,25 @@ export async function mediaRoutes(app: FastifyInstance) {
       return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
     }
 
+    // Shrink + re-encode photos to WebP before generating the thumbnail
+    // (so the thumb derives from the already-rotated optimized image).
+    let storedMime = file.mimetype || 'application/octet-stream';
+    let storedSize = totalBytes;
+    let storedName = file.filename || key;
+    try {
+      const opt = await optimizeImageInPlace(dest, storedMime);
+      if (opt) {
+        storedMime = opt.mimeType;
+        storedSize = opt.sizeBytes;
+        storedName = opt.filename(storedName);
+      }
+    } catch (err) {
+      request.log.warn({ err }, 'media optimization failed, keeping original');
+    }
+
     // Generate a thumbnail for images. Best-effort — failures don't block upload.
     let thumbKey: string | null = null;
-    if (IMAGE_MIMES.has(file.mimetype)) {
+    if (IMAGE_MIMES.has(storedMime)) {
       const thumbName = `${path.basename(key, ext)}_thumb.webp`;
       const thumbDest = path.join(deptDir, thumbName);
       try {
@@ -163,10 +180,10 @@ export async function mediaRoutes(app: FastifyInstance) {
       data: {
         departmentId: request.params.id,
         uploadedById: request.userId!,
-        title: file.filename || key,
-        filename: file.filename || key,
-        mimeType: file.mimetype || 'application/octet-stream',
-        sizeBytes: totalBytes,
+        title: storedName,
+        filename: storedName,
+        mimeType: storedMime,
+        sizeBytes: storedSize,
         s3Key: `${request.params.id}/${key}`,
         thumbS3Key: thumbKey,
       },

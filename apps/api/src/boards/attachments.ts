@@ -8,6 +8,7 @@ import { verifyAccessToken } from '../auth/tokens.js';
 import { loadMembership, canViewBoard, canEditBoard } from './auth.js';
 import { logActivity } from './activity.js';
 import { emitBoardEvent, actorSocketId } from '../realtime.js';
+import { optimizeImageInPlace } from '../lib/optimize.js';
 
 const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads');
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -77,13 +78,28 @@ export async function attachmentRoutes(app: FastifyInstance) {
       return reply.code(413).send({ error: 'too_large', message: 'File exceeds 10 MB' });
     }
 
+    // Shrink + re-encode photos to WebP — saves ~70% bandwidth.
+    let storedMime = file.mimetype || 'application/octet-stream';
+    let storedSize = totalBytes;
+    let storedName = file.filename || key;
+    try {
+      const opt = await optimizeImageInPlace(dest, storedMime);
+      if (opt) {
+        storedMime = opt.mimeType;
+        storedSize = opt.sizeBytes;
+        storedName = opt.filename(storedName);
+      }
+    } catch (err) {
+      request.log.warn({ err }, 'image optimization failed, keeping original');
+    }
+
     const att = await prisma.attachment.create({
       data: {
         cardId: card.id,
         uploadedById: request.userId!,
-        filename: file.filename || key,
-        mimeType: file.mimetype || 'application/octet-stream',
-        sizeBytes: totalBytes,
+        filename: storedName,
+        mimeType: storedMime,
+        sizeBytes: storedSize,
         s3Key: `${card.id}/${key}`,
       },
     });

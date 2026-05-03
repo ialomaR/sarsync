@@ -74,7 +74,7 @@ async function main() {
     data: {
       workspaceId: ws.id, departmentId: deptDesign.id, teamId: teamProduct.id,
       title: 'Q3 Product Roadmap', subtitle: 'Cross-functional · 12 members',
-      hue: 220, starred: true,
+      hue: 220,
       labels: {
         create: [
           { name: 'Feature',  color: '#3B82F6', bg: '#E0EBFF' },

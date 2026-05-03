@@ -19,6 +19,7 @@ import { attachmentRoutes } from './boards/attachments.js';
 import { mediaRoutes } from './media/routes.js';
 import { chatRoutes } from './chat/routes.js';
 import { notificationRoutes } from './notifications/routes.js';
+import { systemRoutes } from './system/routes.js';
 
 export interface BuildOptions {
   silent?: boolean; // suppress log output in tests
@@ -59,6 +60,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
   await app.register(mediaRoutes);
   await app.register(chatRoutes);
   await app.register(notificationRoutes);
+  await app.register(systemRoutes);
 
   return app;
 }

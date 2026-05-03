@@ -110,6 +110,14 @@ export function Sidebar({ theme, rtl }) {
       to: '/admin', active: location.pathname === '/admin',
     });
   }
+  // Platform admin — separate from workspace admin. Visible only to users
+  // with isSystemAdmin (set via SYSTEM_ADMIN_EMAILS env on the server).
+  if (auth.user?.isSystemAdmin) {
+    navItems.push({
+      icon: 'settings', label: rtl ? 'إدارة المنصة' : 'Platform admin',
+      to: '/system', active: location.pathname === '/system',
+    });
+  }
 
   return (
     <div style={{

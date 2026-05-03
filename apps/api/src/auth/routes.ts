@@ -9,6 +9,7 @@ import {
 } from './tokens.js';
 import { createResetToken, findValidResetToken, consumeResetToken } from './reset.js';
 import { createVerificationToken, findValidVerificationToken, consumeVerificationToken } from './verification.js';
+import { syncSystemAdminFlag } from './system.js';
 import {
   generateSecret, provisioningUri, verifyTotp,
   signChallengeToken, verifyChallengeToken,
@@ -128,6 +129,9 @@ export async function authRoutes(app: FastifyInstance) {
       return { user };
     });
 
+    // Auto-promote to platform admin if the email matches the env list.
+    await syncSystemAdminFlag(user.id, user.email);
+
     const accessToken = signAccessToken(user);
     const { refreshToken } = await issueRefreshToken(user.id, {
       userAgent: request.headers['user-agent'],
@@ -166,6 +170,11 @@ export async function authRoutes(app: FastifyInstance) {
     if (!ok) {
       return reply.code(401).send({ error: 'invalid_credentials', message: 'Email or password is incorrect' });
     }
+
+    // Auto-promote to platform admin if the email matches the env list
+    // (re-checked each signin so that adding/removing emails takes effect
+    // without requiring a redeploy).
+    await syncSystemAdminFlag(user.id, user.email);
 
     // 2FA gate: if the user has TOTP enabled, the password is just step 1.
     // Issue a short-lived challenge token instead of access tokens. The
@@ -297,6 +306,45 @@ export async function authRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ ok: true });
+  });
+
+  // ── Change password (signed-in user) ─────────────────────────────────────
+  // Verifies the current password, hashes the new one, and revokes every
+  // outstanding refresh token so all other sessions are forced to re-login.
+
+  const ChangePassword = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(8).max(200),
+  });
+  app.post('/auth/change-password', { preHandler: requireAuth }, async (request, reply) => {
+    const parsed = ChangePassword.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: request.userId! } });
+    if (!user || !user.passwordHash) return reply.code(401).send({ error: 'unauthorized' });
+
+    const ok = await verifyPassword(parsed.data.currentPassword, user.passwordHash);
+    if (!ok) return reply.code(400).send({ error: 'invalid_current', message: 'Current password is incorrect' });
+
+    const pwError = validatePasswordStrength(parsed.data.newPassword);
+    if (pwError) return reply.code(400).send({ error: 'weak_password', message: pwError });
+
+    const newHash = await hashPassword(parsed.data.newPassword);
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: user.id }, data: { passwordHash: newHash } }),
+      prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+    // Issue a fresh refresh token for the current session so the user stays
+    // signed in here while every other session is invalidated.
+    const { refreshToken } = await issueRefreshToken(user.id, {
+      userAgent: request.headers['user-agent'],
+      ip: request.ip,
+    });
+    return reply.send({ ok: true, refreshToken });
   });
 
   // ── Email verification ───────────────────────────────────────────────────

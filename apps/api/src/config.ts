@@ -10,6 +10,9 @@ const Schema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('30d'),
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
+  // Comma-separated emails that should be promoted to platform-level admin
+  // automatically on signin/signup (e.g. founder + ops staff). Optional.
+  SYSTEM_ADMIN_EMAILS: z.string().default(''),
 });
 
 const parsed = Schema.safeParse(process.env);

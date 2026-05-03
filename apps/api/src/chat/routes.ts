@@ -9,6 +9,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { emitDeptEvent, actorSocketId } from '../realtime.js';
 import { notify } from '../notifications/service.js';
+import { optimizeImageInPlace } from '../lib/optimize.js';
 
 // Markup convention: @[Display Name](userId)
 // Only IDs are trusted on the server; the display name is just for rendering.
@@ -389,8 +390,23 @@ export async function chatRoutes(app: FastifyInstance) {
       return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
     }
 
+    // Shrink + re-encode photos to WebP before deriving the thumbnail.
+    let storedMime = file.mimetype || 'application/octet-stream';
+    let storedSize = totalBytes;
+    let storedName = file.filename || key;
+    try {
+      const opt = await optimizeImageInPlace(dest, storedMime);
+      if (opt) {
+        storedMime = opt.mimeType;
+        storedSize = opt.sizeBytes;
+        storedName = opt.filename(storedName);
+      }
+    } catch (err) {
+      request.log.warn({ err }, 'chat image optimization failed, keeping original');
+    }
+
     let thumbKey: string | null = null;
-    if (IMAGE_MIMES.has(file.mimetype)) {
+    if (IMAGE_MIMES.has(storedMime)) {
       const thumbName = `${path.basename(key, ext)}_thumb.webp`;
       const thumbDest = path.join(deptDir, thumbName);
       try {
@@ -412,9 +428,9 @@ export async function chatRoutes(app: FastifyInstance) {
 
     const att = await prisma.chatAttachment.create({
       data: {
-        filename: file.filename || key,
-        mimeType: file.mimetype || 'application/octet-stream',
-        sizeBytes: totalBytes,
+        filename: storedName,
+        mimeType: storedMime,
+        sizeBytes: storedSize,
         s3Key: `${request.params.id}/${key}`,
         thumbS3Key: thumbKey,
         durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,

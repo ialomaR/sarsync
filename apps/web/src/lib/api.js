@@ -193,3 +193,27 @@ export async function verify2FA(challengeToken, code) {
 export async function regenerateBackupCodes() {
   return api('/auth/2fa/backup-codes/regenerate', { method: 'POST' });
 }
+
+export async function changePassword(currentPassword, newPassword) {
+  const data = await api('/auth/change-password', {
+    method: 'POST',
+    body: { currentPassword, newPassword },
+  });
+  // Server revokes all refresh tokens and issues a new one for THIS session.
+  if (data.refreshToken) setRefreshToken(data.refreshToken);
+  return data;
+}
+
+// ── Platform admin (isSystemAdmin only) ───────────────────────────────────
+export async function fetchSystemStats() {
+  return api('/system/stats');
+}
+export async function fetchSystemWorkspaces() {
+  return api('/system/workspaces');
+}
+export async function issueResetForUser(email) {
+  return api('/system/users/issue-reset', { method: 'POST', body: { email } });
+}
+export async function deleteSystemWorkspace(id) {
+  return api(`/system/workspaces/${id}`, { method: 'DELETE' });
+}

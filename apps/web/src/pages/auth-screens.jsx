@@ -330,8 +330,8 @@ export function SignInScreen({ themeName, accent, rtl }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [show, setShow] = React.useState(false);
-  const [email, setEmail] = React.useState('sara@sarsync.com');
-  const [password, setPassword] = React.useState('sarsync-secret');
+  const [email, setEmail] = React.useState('');
+  const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
 

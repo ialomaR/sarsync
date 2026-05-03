@@ -31,6 +31,11 @@ model User {
   lastName      String
   avatarColor   String   @default("#3B82F6")  // for the initials avatar
   locale        String   @default("en")       // 'en' | 'ar'
+  // Platform-wide super admin. Promoted automatically when the user's email
+  // matches SYSTEM_ADMIN_EMAILS env on signin/signup. Has cross-workspace
+  // visibility + ability to issue password resets for any user. Distinct
+  // from Membership.role=admin which is workspace-scoped.
+  isSystemAdmin Boolean  @default(false)
   // ── 2FA (TOTP) ────────────────────────────────────────────────
   twoFactorEnabled     Boolean @default(false)
   twoFactorSecret      String? // base32-encoded TOTP secret

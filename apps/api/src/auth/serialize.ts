@@ -6,6 +6,7 @@ export function toAuthUser(u: {
   avatarColor: string; locale: string;
   emailVerified?: Date | null;
   twoFactorEnabled?: boolean;
+  isSystemAdmin?: boolean;
 }) {
   return {
     id: u.id,
@@ -16,6 +17,7 @@ export function toAuthUser(u: {
     locale: u.locale,
     emailVerified: u.emailVerified ? u.emailVerified.toISOString() : null,
     twoFactorEnabled: !!u.twoFactorEnabled,
+    isSystemAdmin: !!u.isSystemAdmin,
   };
 }
 
