@@ -128,7 +128,23 @@ export function DeptChat({ theme, rtl, deptId }) {
       } else if (evt.kind === 'chat:message_edited') {
         const m = evt.payload;
         if (m.departmentId !== deptId) return;
-        setMessages((prev) => prev.map((x) => x.id === m.id ? m : x));
+        setMessages((prev) => prev.map((x) => {
+          if (x.id !== m.id) return x;
+          // Preserve savedToMediaId across edits — the server only re-sends
+          // null because edits don't re-resolve the saved-state map.
+          const att = m.attachment && x.attachment
+            ? { ...m.attachment, savedToMediaId: x.attachment.savedToMediaId ?? m.attachment.savedToMediaId }
+            : m.attachment;
+          return { ...m, attachment: att };
+        }));
+      } else if (evt.kind === 'chat:attachment_saved') {
+        const { attachmentId, mediaItemId } = evt.payload || {};
+        if (!attachmentId) return;
+        setMessages((prev) => prev.map((x) =>
+          x.attachment?.id === attachmentId
+            ? { ...x, attachment: { ...x.attachment, savedToMediaId: mediaItemId } }
+            : x
+        ));
       } else if (evt.kind === 'chat:message_deleted') {
         const { id, departmentId } = evt.payload;
         if (departmentId !== deptId) return;
@@ -284,6 +300,16 @@ export function DeptChat({ theme, rtl, deptId }) {
   };
 
   const editEditorRef = React.useRef(null);
+  // Marks an attachment as saved to media in our own state. The server
+  // broadcasts to other clients via socket; this handler covers our tab
+  // (which the server excludes from its own broadcast to prevent echo).
+  const onAttachmentSaved = (attId, mediaItemId) => {
+    setMessages((prev) => prev.map((m) =>
+      m.attachment?.id === attId
+        ? { ...m, attachment: { ...m.attachment, savedToMediaId: mediaItemId } }
+        : m));
+  };
+
   const startEdit = (m) => { setEditingId(m.id); setEditingText(m.body); };
   const submitEdit = async (m) => {
     // Pull markup from the edit editor at submit time so mention chips are
@@ -468,7 +494,8 @@ export function DeptChat({ theme, rtl, deptId }) {
                     onCancelEdit={() => setEditingId(null)}
                     onSubmitEdit={() => submitEdit(m)}
                     onStartEdit={() => startEdit(m)}
-                    onDelete={() => deleteMsg(m)} />
+                    onDelete={() => deleteMsg(m)}
+                    onAttachmentSaved={onAttachmentSaved} />
                 ))}
               </div>
             </div>
@@ -506,7 +533,7 @@ export function DeptChat({ theme, rtl, deptId }) {
   );
 }
 
-function Bubble({ theme, rtl, msg, myId, mentionableMembers, isMine, isFirstInGroup, isLastInGroup, editing, editEditorRef, onChangeEdit, onCancelEdit, onSubmitEdit, onStartEdit, onDelete }) {
+function Bubble({ theme, rtl, msg, myId, mentionableMembers, isMine, isFirstInGroup, isLastInGroup, editing, editEditorRef, onChangeEdit, onCancelEdit, onSubmitEdit, onStartEdit, onDelete, onAttachmentSaved }) {
   // 2-minute window applies to BOTH edit and self-delete; afterwards the
   // message locks as a record. Managers retain delete rights server-side.
   const inWindow = isMine && !msg.deleted
@@ -612,7 +639,7 @@ function Bubble({ theme, rtl, msg, myId, mentionableMembers, isMine, isFirstInGr
                 </div>
               )}
               {msg.attachment && msg.attachment.isImage && (
-                <div style={{ position: 'relative', marginTop: msg.body ? 6 : 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', marginTop: msg.body ? 6 : 0 }}>
                   <a href={withToken(msg.attachment.url)} target="_blank" rel="noreferrer" style={{
                     display: 'block', overflow: 'hidden', borderRadius: 12,
                   }}>
@@ -620,13 +647,13 @@ function Bubble({ theme, rtl, msg, myId, mentionableMembers, isMine, isFirstInGr
                       alt={msg.attachment.filename}
                       style={{ display: 'block', maxWidth: 280, maxHeight: 280, width: 'auto', height: 'auto' }} />
                   </a>
-                  <SaveToMediaButton theme={theme} rtl={rtl} att={msg.attachment} />
+                  <SaveToMediaButton theme={theme} rtl={rtl} att={msg.attachment} onSaved={onAttachmentSaved} />
                 </div>
               )}
               {msg.attachment && !msg.attachment.isImage && !msg.attachment.durationMs && (
-                <div style={{ position: 'relative', display: 'inline-block' }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <FileChip theme={theme} rtl={rtl} isMine={isMine} att={msg.attachment} />
-                  <SaveToMediaButton theme={theme} rtl={rtl} att={msg.attachment} />
+                  <SaveToMediaButton theme={theme} rtl={rtl} att={msg.attachment} onSaved={onAttachmentSaved} />
                 </div>
               )}
               <div style={{
@@ -668,38 +695,44 @@ function Bubble({ theme, rtl, msg, myId, mentionableMembers, isMine, isFirstInGr
   );
 }
 
-// Hover-to-reveal pill that copies a chat attachment into the dept's media
-// library. Idempotent on the UI side: once clicked, switches to ✓ saved.
-function SaveToMediaButton({ theme, rtl, att }) {
-  const [state, setState] = React.useState('idle'); // 'idle' | 'busy' | 'done' | 'err'
+// Save-to-media affordance. Renders a small icon BELOW the attachment so
+// it never obscures the content. Hidden entirely once any user has saved
+// the file — the chat:attachment_saved socket event syncs all open clients.
+function SaveToMediaButton({ theme, rtl, att, onSaved }) {
+  const [busy, setBusy] = React.useState(false);
+  if (att.savedToMediaId) return null;  // already in the library
   const onClick = async (e) => {
     e.stopPropagation();
     e.preventDefault();
-    if (state === 'busy' || state === 'done') return;
-    setState('busy');
+    if (busy) return;
+    setBusy(true);
     try {
-      await saveChatAttachmentToMedia(att.id);
-      setState('done');
+      const r = await saveChatAttachmentToMedia(att.id);
+      // Server excludes our socket from the broadcast, so update locally.
+      onSaved?.(att.id, r.id);
     } catch (err) {
-      setState('err');
       alert(err.message);
+    } finally {
+      setBusy(false);
     }
   };
-  const label =
-    state === 'done' ? (rtl ? '✓ محفوظ في الميديا' : '✓ Saved to media')
-  : state === 'busy' ? (rtl ? 'جاري الحفظ…' : 'Saving…')
-  : (rtl ? 'حفظ في الميديا' : 'Save to media');
   return (
-    <button onClick={onClick} title={label} style={{
-      position: 'absolute', top: 6, insetInlineEnd: 6,
-      padding: '3px 8px', borderRadius: 999,
-      background: state === 'done' ? '#0E7C66' : 'rgba(0,0,0,.55)',
-      color: '#fff', border: 'none',
-      fontSize: 10.5, fontWeight: 600,
-      cursor: state === 'done' ? 'default' : 'pointer',
-      fontFamily: 'inherit',
-      backdropFilter: 'blur(4px)',
-    }}>{label}</button>
+    <button onClick={onClick}
+      title={rtl ? 'حفظ في الميديا' : 'Save to media library'}
+      style={{
+        marginTop: 4, marginInlineStart: 'auto',
+        width: 26, height: 26, borderRadius: '50%',
+        background: theme.surface, color: theme.muted,
+        border: `.5px solid ${theme.border}`,
+        cursor: busy ? 'wait' : 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'inherit',
+        opacity: busy ? 0.5 : 1, transition: 'opacity .12s, color .12s',
+      }}
+      onMouseEnter={(e) => { if (!busy) e.currentTarget.style.color = theme.accent; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = theme.muted; }}>
+      <Icon.saveDown size={14} />
+    </button>
   );
 }
 

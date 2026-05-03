@@ -66,7 +66,11 @@ function serializeMessage(msg: {
     id: string; filename: string; mimeType: string; sizeBytes: number;
     durationMs: number | null; thumbS3Key: string | null;
   } | null;
-}) {
+}, savedMediaIdByAttachment?: Map<string, string>) {
+  const att = msg.attachment;
+  const savedToMediaId = att && savedMediaIdByAttachment
+    ? (savedMediaIdByAttachment.get(att.id) ?? null)
+    : null;
   return {
     id: msg.id,
     departmentId: msg.departmentId,
@@ -81,26 +85,41 @@ function serializeMessage(msg: {
     deleted: !!msg.deletedAt,
     createdAt: msg.createdAt.toISOString(),
     editedAt: msg.editedAt ? msg.editedAt.toISOString() : null,
-    attachment: msg.attachment ? {
-      id: msg.attachment.id,
-      filename: msg.attachment.filename,
-      mimeType: msg.attachment.mimeType,
-      sizeBytes: msg.attachment.sizeBytes,
-      durationMs: msg.attachment.durationMs,
-      isImage: IMAGE_MIMES.has(msg.attachment.mimeType),
-      url: `/api/chat/attachments/${msg.attachment.id}/file`,
-      thumbUrl: msg.attachment.thumbS3Key ? `/api/chat/attachments/${msg.attachment.id}/thumb` : null,
+    attachment: att ? {
+      id: att.id,
+      filename: att.filename,
+      mimeType: att.mimeType,
+      sizeBytes: att.sizeBytes,
+      durationMs: att.durationMs,
+      isImage: IMAGE_MIMES.has(att.mimeType),
+      url: `/api/chat/attachments/${att.id}/file`,
+      thumbUrl: att.thumbS3Key ? `/api/chat/attachments/${att.id}/thumb` : null,
+      savedToMediaId,
     } : null,
   };
 }
 
+// Bulk-resolves "is this attachment already in the media library?" for a
+// list of messages. Avoids an N+1 query when paginating chat history.
+async function resolveSavedMediaIds(attachmentIds: string[]): Promise<Map<string, string>> {
+  if (attachmentIds.length === 0) return new Map();
+  const rows = await prisma.mediaItem.findMany({
+    where: { chatAttachmentId: { in: attachmentIds } },
+    select: { id: true, chatAttachmentId: true },
+  });
+  return new Map(rows
+    .filter((r) => r.chatAttachmentId)
+    .map((r) => [r.chatAttachmentId as string, r.id]));
+}
+
 export async function chatRoutes(app: FastifyInstance) {
-  // Standard Bearer auth for JSON endpoints. Attachment file/thumb GETs use
-  // their own preHandler (token query param) since browsers can't set
-  // Authorization on <img>.
+  // Standard Bearer auth for JSON endpoints. The attachment FILE/THUMB GETs
+  // (rendered by <img src>) use a custom preHandler with ?token= support —
+  // we exempt only those exact two paths so JSON actions like
+  // /chat/attachments/:id/save-to-media still go through requireAuth.
+  const ATTACHMENT_FILE_RE = /\/chat\/attachments\/[^/]+\/(file|thumb)(\?|$)/;
   app.addHook('preHandler', async (request, reply) => {
-    // Allow attachment GETs to fall through to their custom auth.
-    if (request.url.startsWith('/api/chat/attachments/') || request.url.startsWith('/chat/attachments/')) return;
+    if (ATTACHMENT_FILE_RE.test(request.url)) return;
     return requireAuth(request, reply);
   });
 
@@ -131,8 +150,11 @@ export async function chatRoutes(app: FastifyInstance) {
 
       // Return chronological (oldest first) so the UI can append at bottom.
       slice.reverse();
+      const savedMap = await resolveSavedMediaIds(
+        slice.map((m) => m.attachmentId).filter((id): id is string => !!id),
+      );
       return reply.send({
-        messages: slice.map(serializeMessage),
+        messages: slice.map((m) => serializeMessage(m, savedMap)),
         hasMore,
       });
     });
@@ -465,6 +487,23 @@ export async function chatRoutes(app: FastifyInstance) {
     const v = await deptMembership(request.userId!, att.message.departmentId);
     if (!v) return reply.code(403).send({ error: 'forbidden', message: 'No access to this department' });
 
+    // Idempotent: if anyone has already saved this attachment, return the
+    // existing MediaItem instead of duplicating the file on disk.
+    const existing = await prisma.mediaItem.findUnique({
+      where: { chatAttachmentId: att.id },
+    });
+    if (existing) {
+      return reply.send({
+        id: existing.id, alreadySaved: true,
+        title: existing.title, filename: existing.filename,
+        mimeType: existing.mimeType, sizeBytes: existing.sizeBytes,
+        isImage: IMAGE_MIMES.has(existing.mimeType),
+        url: `/api/media/${existing.id}/file`,
+        thumbUrl: existing.thumbS3Key ? `/api/media/${existing.id}/thumb` : null,
+        source: existing.source,
+      });
+    }
+
     const ext = path.extname(att.s3Key);
     const newKey = `${crypto.randomBytes(12).toString('hex')}${ext}`;
     const newRel = `${att.message.departmentId}/${newKey}`;
@@ -496,8 +535,15 @@ export async function chatRoutes(app: FastifyInstance) {
         s3Key: newRel,
         thumbS3Key: thumbRel,
         source: 'chat',
+        chatAttachmentId: att.id,
       },
     });
+
+    // Tell every other client in this dept's chat room to hide the save
+    // button on this attachment — the file is now in the library.
+    emitDeptEvent(att.message.departmentId, 'chat:attachment_saved',
+      { attachmentId: att.id, mediaItemId: media.id },
+      actorSocketId(request));
 
     return reply.code(201).send({
       id: media.id,

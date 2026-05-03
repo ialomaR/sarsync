@@ -23,4 +23,6 @@ export const Icon = {
   paperclip: (p = {}) => <svg width={p.size||18} height={p.size||18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.4 11.05L12.25 20.2a5 5 0 0 1-7.07-7.07l9.19-9.19a3.4 3.4 0 0 1 4.81 4.81l-9.19 9.19a1.83 1.83 0 0 1-2.59-2.59l8.49-8.49"/></svg>,
   send: (p = {}) => <svg width={p.size||18} height={p.size||18} viewBox="0 0 24 24" fill="currentColor"><path d="M2.5 3.3a1 1 0 0 1 1.36-1.05l18 7.5a1 1 0 0 1 0 1.85l-18 7.5a1 1 0 0 1-1.36-1.21L4.84 12 2.5 3.3zm3.34 9.7l-1.36 5.07L17.97 12 4.48 5.93 5.84 11h6.66a1 1 0 1 1 0 2H5.84z"/></svg>,
   trash: (p = {}) => <svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>,
+  // Down-arrow into a tray — universal "save / download to here" symbol.
+  saveDown: (p = {}) => <svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>,
 };

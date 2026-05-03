@@ -265,6 +265,10 @@ model MediaItem {
   // 'chat' (saved from a department chat attachment). Drives the filter
   // tabs in the media UI.
   source       String   @default("upload")
+  // When source='chat', the chat attachment this item was copied from.
+  // Unique → "save to media" is idempotent: the second user clicking it
+  // gets the existing MediaItem instead of a duplicate.
+  chatAttachmentId String? @unique
   createdAt    DateTime @default(now())
 
   department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
