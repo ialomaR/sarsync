@@ -13,6 +13,12 @@ const Schema = z.object({
   // Comma-separated emails that should be promoted to platform-level admin
   // automatically on signin/signup (e.g. founder + ops staff). Optional.
   SYSTEM_ADMIN_EMAILS: z.string().default(''),
+  // SendGrid for transactional email (verify-email, password reset, invites).
+  // When unset, those flows fall back to logging the link in the server log
+  // so local dev still works without a key.
+  SENDGRID_API_KEY: z.string().default(''),
+  SENDGRID_FROM_EMAIL: z.string().default('noreply@sarsync.com'),
+  SENDGRID_FROM_NAME: z.string().default('SarSync'),
 });
 
 const parsed = Schema.safeParse(process.env);

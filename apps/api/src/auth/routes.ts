@@ -18,6 +18,7 @@ import {
 import { requireAuth } from './middleware.js';
 import { toAuthUser, loadMembershipSummaries } from './serialize.js';
 import QRCode from 'qrcode';
+import { sendEmail, brandedHtml } from '../lib/email.js';
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
@@ -139,11 +140,23 @@ export async function authRoutes(app: FastifyInstance) {
     });
     const memberships = await loadMembershipSummaries(user.id);
 
-    // Email verification: create a token and surface the link in dev so
-    // testers can verify without running an SMTP server. Prod will mail it.
+    // Email verification: create a token, mail the link via SendGrid (or
+    // log it in dev when no key is set), and also return the dev URL inline
+    // so testers can complete the flow without inbox access.
     const verifyToken = await createVerificationToken(user.id);
     const verifyUrl = `${config.WEB_ORIGIN}/auth/verify?token=${verifyToken}`;
-    app.log.info({ email: user.email, url: verifyUrl }, 'email verification link generated');
+    sendEmail({
+      to: user.email,
+      subject: 'Verify your SarSync email',
+      text: `Welcome to SarSync, ${user.firstName}!\n\nVerify your email to unlock all features:\n${verifyUrl}\n\nThe link is valid for 24 hours.`,
+      html: brandedHtml({
+        heading: `Welcome, ${user.firstName} 👋`,
+        body: `<p>Confirm this is your email address so we can keep your SarSync workspace secure.</p>`,
+        cta: { label: 'Verify my email', url: verifyUrl },
+      }),
+      reason: 'signup_verification',
+      log: app.log,
+    }).catch(() => {});
 
     return reply.code(201).send({
       accessToken,
@@ -275,8 +288,18 @@ export async function authRoutes(app: FastifyInstance) {
         userAgent: request.headers['user-agent'],
       });
       const url = `${config.WEB_ORIGIN}/auth/reset?token=${token}`;
-      // TODO: replace with real email send (SES) when wiring deploy.
-      app.log.info({ email, url }, 'password reset link generated');
+      sendEmail({
+        to: user.email,
+        subject: 'Reset your SarSync password',
+        text: `Hi ${user.firstName},\n\nA password reset was requested for your SarSync account. If this was you, follow the link below — valid for 15 minutes:\n${url}\n\nIf you didn't request this, you can safely ignore this email.`,
+        html: brandedHtml({
+          heading: 'Reset your password',
+          body: `<p>A password reset was requested for your account. The link below is valid for <strong>15 minutes</strong>.</p><p style="color:#6B7280;font-size:12.5px;">If you didn't request this, you can safely ignore this email — your password won't change.</p>`,
+          cta: { label: 'Reset password', url },
+        }),
+        reason: 'password_reset',
+        log: app.log,
+      }).catch(() => {});
       if (!isProd) devUrl = url;
     } else {
       app.log.info({ email }, 'password reset requested for unknown email — silently ignored');
@@ -393,7 +416,18 @@ export async function authRoutes(app: FastifyInstance) {
     }
     const token = await createVerificationToken(user.id);
     const url = `${config.WEB_ORIGIN}/auth/verify?token=${token}`;
-    app.log.info({ email: user.email, url }, 'email verification link re-issued');
+    sendEmail({
+      to: user.email,
+      subject: 'Verify your SarSync email',
+      text: `Hi ${user.firstName},\n\nHere's a fresh link to verify your email — valid for 24 hours:\n${url}`,
+      html: brandedHtml({
+        heading: 'Verify your email',
+        body: `<p>Here's a fresh link. It's valid for <strong>24 hours</strong>.</p>`,
+        cta: { label: 'Verify my email', url },
+      }),
+      reason: 'verification_resend',
+      log: app.log,
+    }).catch(() => {});
     return reply.send({ ok: true, ...(isProd ? {} : { devUrl: url }) });
   });
 

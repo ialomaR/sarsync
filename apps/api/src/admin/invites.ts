@@ -8,6 +8,8 @@ import { loadMembership } from '../boards/auth.js';
 import { hashPassword, validatePasswordStrength } from '../auth/passwords.js';
 import { signAccessToken, issueRefreshToken } from '../auth/tokens.js';
 import { toAuthUser, loadMembershipSummaries } from '../auth/serialize.js';
+import { sendEmail, brandedHtml } from '../lib/email.js';
+import { config } from '../config.js';
 import { notify } from '../notifications/service.js';
 
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
@@ -116,15 +118,40 @@ export async function inviteRoutes(app: FastifyInstance) {
         },
       });
 
-      // In dev we just return the token; prod would send via SES.
-      const inviteUrl = `/invite/${token}`;
+      // Mail the invite link via SendGrid (or log it in dev when no key).
+      // We also return the relative URL so the admin can copy it manually
+      // if they prefer.
+      const relUrl = `/invite/${token}`;
+      const absUrl = `${config.WEB_ORIGIN}${relUrl}`;
+      const inviter = await prisma.user.findUnique({
+        where: { id: request.userId! },
+        select: { firstName: true, lastName: true },
+      });
+      const inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}`.trim() : 'A teammate';
+      const wsName = (await prisma.workspace.findUnique({
+        where: { id: m.workspaceId }, select: { name: true },
+      }))?.name || 'a SarSync workspace';
+
+      sendEmail({
+        to: targetEmail,
+        subject: `${inviterName} invited you to ${wsName} on SarSync`,
+        text: `${inviterName} invited you to join "${wsName}" on SarSync as ${parsed.data.role.replace('_', ' ')}.\n\nAccept the invitation:\n${absUrl}\n\nThe link is valid for 14 days.`,
+        html: brandedHtml({
+          heading: `Join ${wsName}`,
+          body: `<p><strong>${inviterName}</strong> invited you to collaborate on <strong>${wsName}</strong> as <em>${parsed.data.role.replace('_', ' ')}</em>.</p><p style="color:#6B7280;font-size:12.5px;">This invitation is valid for 14 days.</p>`,
+          cta: { label: 'Accept invitation', url: absUrl },
+        }),
+        reason: 'workspace_invite',
+        log: app.log,
+      }).catch(() => {});
+
       return reply.code(201).send({
         id: invite.id,
         email: invite.email,
         role: invite.role,
         expiresAt: invite.expiresAt.toISOString(),
-        inviteUrl,
-        token, // dev only
+        inviteUrl: relUrl,
+        token, // dev only — admin can share manually if email isn't reaching
       });
     });
 
