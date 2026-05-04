@@ -45,6 +45,10 @@ export async function putObject(key: string, body: Buffer, contentType: string):
 // Returns the object as a Buffer, or null if the key doesn't exist. Used by
 // download endpoints — small enough payloads (≤100MB) that buffering is
 // simpler than streaming. Switch to streaming if memory becomes a concern.
+//
+// When S3 is the active backend, we still check the local disk if the S3
+// lookup misses. This makes the on-prem → S3 migration seamless: pre-S3
+// files on disk keep serving while new files land in the bucket.
 export async function getObjectBuffer(key: string): Promise<Buffer | null> {
   if (isS3()) {
     try {
@@ -59,19 +63,17 @@ export async function getObjectBuffer(key: string): Promise<Buffer | null> {
       return Buffer.concat(chunks);
     } catch (err) {
       const name = (err as { name?: string }).name;
-      if (name === 'NoSuchKey' || name === 'NotFound') return null;
-      // S3 sometimes returns 403 for missing keys depending on bucket policy
       const code = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
-      if (code === 403 || code === 404) return null;
-      throw err;
+      const missing = name === 'NoSuchKey' || name === 'NotFound' || code === 403 || code === 404;
+      if (!missing) throw err;
+      // Fall back to local disk (legacy uploads from before S3 was wired).
     }
-  } else {
-    try {
-      return await fs.readFile(path.join(LOCAL_ROOT, key));
-    } catch (err) {
-      if ((err as { code?: string }).code === 'ENOENT') return null;
-      throw err;
-    }
+  }
+  try {
+    return await fs.readFile(path.join(LOCAL_ROOT, key));
+  } catch (err) {
+    if ((err as { code?: string }).code === 'ENOENT') return null;
+    throw err;
   }
 }
 
