@@ -143,6 +143,7 @@ function BoardsHomeContent() {
       {showCreate && (
         <NewBoardModal theme={theme} rtl={rtl}
           workspaceId={workspaceId}
+          isAdmin={m?.role === 'admin'}
           onClose={() => setShowCreate(false)}
           onCreated={onCreated} />
       )}
@@ -150,9 +151,11 @@ function BoardsHomeContent() {
   );
 }
 
-function NewBoardModal({ theme, rtl, workspaceId, onClose, onCreated }) {
+function NewBoardModal({ theme, rtl, workspaceId, isAdmin, onClose, onCreated }) {
   const [title, setTitle] = React.useState('');
   const [hue, setHue] = React.useState(220);
+  const [departmentId, setDepartmentId] = React.useState('');  // '' = workspace-wide
+  const [departments, setDepartments] = React.useState(null);  // null until loaded
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState(null);
 
@@ -162,14 +165,26 @@ function NewBoardModal({ theme, rtl, workspaceId, onClose, onCreated }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Admins choose where the board lives. Other roles are auto-scoped server-side.
+  React.useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    api(`/workspaces/${workspaceId}/departments`)
+      .then((d) => { if (!cancelled) setDepartments(d.departments || []); })
+      .catch(() => { if (!cancelled) setDepartments([]); });
+    return () => { cancelled = true; };
+  }, [isAdmin, workspaceId]);
+
   const submit = async (e) => {
     e?.preventDefault();
     if (!title.trim()) return;
     setSaving(true); setError(null);
     try {
+      const body = { title: title.trim(), hue: Number(hue) };
+      if (isAdmin && departmentId) body.departmentId = departmentId;
       const board = await api(`/workspaces/${workspaceId}/boards`, {
         method: 'POST',
-        body: { title: title.trim(), hue: Number(hue) },
+        body,
       });
       onCreated(board);
     } catch (err) {
@@ -220,6 +235,34 @@ function NewBoardModal({ theme, rtl, workspaceId, onClose, onCreated }) {
                 fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
               }} />
           </label>
+          {isAdmin && (
+            <label style={{ display: 'block', marginBottom: 12 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: theme.text, marginBottom: 5 }}>
+                {rtl ? 'القسم' : 'Department'}
+              </div>
+              <select
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}
+                disabled={departments === null}
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  background: theme.bg, color: theme.text,
+                  border: `1px solid ${theme.border}`, borderRadius: 6,
+                  fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
+                  cursor: departments === null ? 'wait' : 'pointer',
+                }}>
+                <option value="">{rtl ? 'لكل المساحة (مرئية للجميع)' : 'Workspace-wide (visible to everyone)'}</option>
+                {(departments || []).map((d) => (
+                  <option key={d.id} value={d.id}>{rtl ? (d.nameAr || d.name) : d.name}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10.5, color: theme.muted, marginTop: 4 }}>
+                {rtl
+                  ? 'اختيار قسم يقصر اللوحة على أعضائه فقط.'
+                  : 'Picking a department restricts the board to its members.'}
+              </div>
+            </label>
+          )}
           <div>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: theme.text, marginBottom: 6 }}>{rtl ? 'لون اللوحة' : 'Background'}</div>
             <div style={{ display: 'flex', gap: 6 }}>
