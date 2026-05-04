@@ -29,8 +29,15 @@ export async function loadMembership(
   if (!userId) return reply.code(401).send({ error: 'unauthorized', message: 'Not authenticated' });
   const m = await prisma.membership.findUnique({
     where: { userId_workspaceId: { userId, workspaceId } },
+    include: { workspace: { select: { suspendedAt: true } } },
   });
   if (!m) return reply.code(403).send({ error: 'forbidden', message: 'Not a member of this workspace' });
+  if (m.workspace.suspendedAt) {
+    return reply.code(423).send({
+      error: 'workspace_suspended',
+      message: 'This workspace has been suspended by the platform administrator.',
+    });
+  }
   // Pull all boards the user has explicit access to within this workspace
   const explicit = await prisma.boardMember.findMany({
     where: { userId, board: { workspaceId } },

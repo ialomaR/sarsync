@@ -55,6 +55,7 @@ export async function systemRoutes(app: FastifyInstance) {
         name: w.name,
         hue: w.hue,
         createdAt: w.createdAt.toISOString(),
+        suspendedAt: w.suspendedAt ? w.suspendedAt.toISOString() : null,
         memberCount: w._count.memberships,
         boardCount: w._count.boards,
         owner: w.memberships[0]
@@ -66,6 +67,99 @@ export async function systemRoutes(app: FastifyInstance) {
           : null,
       })),
     });
+  });
+
+  // Detailed view for a single workspace — used by the admin drawer.
+  app.get<{ Params: { id: string } }>('/system/workspaces/:id', async (request, reply) => {
+    const w = await prisma.workspace.findUnique({
+      where: { id: request.params.id },
+      include: {
+        _count: { select: { memberships: true, boards: true, departments: true, teams: true } },
+        memberships: {
+          orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
+          include: {
+            user: { select: { id: true, email: true, firstName: true, lastName: true, suspendedAt: true } },
+            department: { select: { name: true, nameAr: true } },
+          },
+        },
+      },
+    });
+    if (!w) return reply.code(404).send({ error: 'not_found' });
+
+    const since = new Date(Date.now() - 30 * 24 * 3600_000);
+    const [activeCards, completedCards, recentBoards] = await Promise.all([
+      prisma.card.count({ where: { list: { board: { workspaceId: w.id } }, archivedAt: null, completedAt: null } }),
+      prisma.card.count({ where: { list: { board: { workspaceId: w.id } }, completedAt: { gte: since } } }),
+      prisma.board.findMany({
+        where: { workspaceId: w.id, archivedAt: null },
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+        select: { id: true, title: true, updatedAt: true, departmentId: true,
+          _count: { select: { lists: true } } },
+      }),
+    ]);
+
+    return reply.send({
+      id: w.id,
+      slug: w.slug,
+      name: w.name,
+      hue: w.hue,
+      createdAt: w.createdAt.toISOString(),
+      suspendedAt: w.suspendedAt ? w.suspendedAt.toISOString() : null,
+      counts: {
+        members: w._count.memberships,
+        boards: w._count.boards,
+        departments: w._count.departments,
+        teams: w._count.teams,
+        activeCards,
+        completedLast30d: completedCards,
+      },
+      members: w.memberships.map((m) => ({
+        id: m.user.id,
+        email: m.user.email,
+        name: `${m.user.firstName} ${m.user.lastName}`.trim(),
+        role: m.role,
+        department: m.department ? (m.department.nameAr || m.department.name) : null,
+        joinedAt: m.joinedAt.toISOString(),
+        suspended: !!m.user.suspendedAt,
+      })),
+      recentBoards: recentBoards.map((b) => ({
+        id: b.id,
+        title: b.title,
+        listCount: b._count.lists,
+        updatedAt: b.updatedAt.toISOString(),
+      })),
+    });
+  });
+
+  // Suspend a workspace — blocks all member access until reactivated.
+  // Revokes every refresh token of every member so existing sessions die at
+  // the next access-token expiry (~15 min).
+  app.post<{ Params: { id: string } }>('/system/workspaces/:id/suspend', async (request, reply) => {
+    const ws = await prisma.workspace.findUnique({ where: { id: request.params.id } });
+    if (!ws) return reply.code(404).send({ error: 'not_found' });
+    if (ws.suspendedAt) return reply.send({ ok: true, alreadySuspended: true });
+
+    const memberIds = (await prisma.membership.findMany({
+      where: { workspaceId: ws.id }, select: { userId: true },
+    })).map((m) => m.userId);
+
+    await prisma.$transaction([
+      prisma.workspace.update({ where: { id: ws.id }, data: { suspendedAt: new Date() } }),
+      prisma.refreshToken.updateMany({
+        where: { userId: { in: memberIds }, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+    return reply.send({ ok: true });
+  });
+
+  app.post<{ Params: { id: string } }>('/system/workspaces/:id/unsuspend', async (request, reply) => {
+    const ws = await prisma.workspace.findUnique({ where: { id: request.params.id } });
+    if (!ws) return reply.code(404).send({ error: 'not_found' });
+    if (!ws.suspendedAt) return reply.send({ ok: true, alreadyActive: true });
+    await prisma.workspace.update({ where: { id: ws.id }, data: { suspendedAt: null } });
+    return reply.send({ ok: true });
   });
 
   // Generate a one-time reset link for an arbitrary user — for support cases

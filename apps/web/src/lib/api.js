@@ -217,6 +217,15 @@ export async function issueResetForUser(email) {
 export async function deleteSystemWorkspace(id) {
   return api(`/system/workspaces/${id}`, { method: 'DELETE' });
 }
+export async function fetchSystemWorkspaceDetail(id) {
+  return api(`/system/workspaces/${id}`);
+}
+export async function suspendSystemWorkspace(id) {
+  return api(`/system/workspaces/${id}/suspend`, { method: 'POST' });
+}
+export async function unsuspendSystemWorkspace(id) {
+  return api(`/system/workspaces/${id}/unsuspend`, { method: 'POST' });
+}
 
 export async function saveChatAttachmentToMedia(attachmentId) {
   return api(`/chat/attachments/${attachmentId}/save-to-media`, { method: 'POST' });

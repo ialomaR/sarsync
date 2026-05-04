@@ -167,12 +167,13 @@ model PasswordResetToken {
 // ── Workspace + Org structure ──────────────────────────────────────────────
 
 model Workspace {
-  id        String   @id @default(cuid())
-  slug      String   @unique  // sarsync.com/w/<slug>
+  id        String    @id @default(cuid())
+  slug      String    @unique  // sarsync.com/w/<slug>
   name      String
-  hue       Int      @default(220)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  hue       Int       @default(220)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  suspendedAt DateTime?  // Platform-admin freeze; members are blocked while non-null.
 
   departments Department[]
   teams       Team[]

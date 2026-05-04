@@ -8,6 +8,7 @@ import {
   fetchSystemStats, fetchSystemWorkspaces,
   issueResetForUser, deleteSystemWorkspace,
   fetchSystemUsers, suspendUser, unsuspendUser,
+  fetchSystemWorkspaceDetail, suspendSystemWorkspace, unsuspendSystemWorkspace,
 } from '../lib/api.js';
 import { formatRelative } from '../lib/normalize.js';
 import { LoadingScreen } from '../ui/States.jsx';
@@ -72,8 +73,24 @@ function SystemBody({ theme, rtl }) {
     if (confirmation !== ws.name) return;
     try {
       await deleteSystemWorkspace(ws.id);
+      setDetailId(null);
       await refresh();
     } catch (err) { alert(err.message); }
+  };
+
+  const [detailId, setDetailId] = React.useState(null);
+
+  const onSuspendWorkspace = async (ws) => {
+    const ok = window.confirm(rtl
+      ? `إيقاف مساحة "${ws.name}"؟ كل أعضائها سيُسجَّل خروجهم ولن يستطيعوا الوصول إلى لوحاتها حتى تُعاد التفعيل.`
+      : `Suspend "${ws.name}"? All members will be signed out and locked out of its boards until reactivated.`);
+    if (!ok) return;
+    try { await suspendSystemWorkspace(ws.id); await refresh(); }
+    catch (err) { alert(err.message); }
+  };
+  const onUnsuspendWorkspace = async (ws) => {
+    try { await unsuspendSystemWorkspace(ws.id); await refresh(); }
+    catch (err) { alert(err.message); }
   };
 
   const onSuspend = async (u) => {
@@ -207,38 +224,268 @@ function SystemBody({ theme, rtl }) {
         </h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {workspaces.map((w) => (
-            <div key={w.id} style={{
-              display: 'grid', gridTemplateColumns: '40px 1fr auto auto',
-              alignItems: 'center', gap: 12, padding: '10px 14px',
-              background: theme.surface, borderRadius: theme.cardRadius,
-              border: `.5px solid ${theme.border}`,
-            }}>
-              <div style={{
-                width: 32, height: 32, borderRadius: 6,
-                background: `oklch(.78 .12 ${w.hue})`, color: `oklch(.32 .14 ${w.hue})`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: 700,
-              }}>{w.name?.[0]?.toUpperCase() || 'W'}</div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{w.name}</div>
-                <div style={{ fontSize: 11, color: theme.muted, marginTop: 2 }}>
-                  /{w.slug} · {w.memberCount} {rtl ? 'عضو' : 'members'} · {w.boardCount} {rtl ? 'لوحة' : 'boards'}
-                  {w.owner && ` · ${rtl ? 'مالك:' : 'owner:'} ${w.owner.email}`}
-                </div>
-              </div>
-              <div style={{ fontSize: 11, color: theme.mutedDim }}>{formatRelative(w.createdAt)}</div>
-              <button onClick={() => deleteWorkspace(w)} style={{
-                padding: '5px 10px', borderRadius: 5,
-                background: 'transparent', color: '#DC2626',
-                border: `.5px solid #FCA5A5`, fontSize: 11, fontWeight: 600,
-                cursor: 'pointer', fontFamily: 'inherit',
-              }}>{rtl ? 'حذف' : 'Delete'}</button>
-            </div>
+            <WorkspaceRow key={w.id} ws={w} theme={theme} rtl={rtl}
+              onOpen={() => setDetailId(w.id)}
+              onSuspend={() => onSuspendWorkspace(w)}
+              onUnsuspend={() => onUnsuspendWorkspace(w)}
+              onDelete={() => deleteWorkspace(w)} />
           ))}
         </div>
       </div>
         </>
       )}
+
+      {detailId && (
+        <WorkspaceDetailDrawer
+          theme={theme} rtl={rtl} workspaceId={detailId}
+          onClose={() => setDetailId(null)}
+          onSuspend={onSuspendWorkspace}
+          onUnsuspend={onUnsuspendWorkspace}
+          onDelete={deleteWorkspace} />
+      )}
+    </div>
+  );
+}
+
+function WorkspaceRow({ ws, theme, rtl, onOpen, onSuspend, onUnsuspend, onDelete }) {
+  const suspended = !!ws.suspendedAt;
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '40px 1fr auto auto',
+      alignItems: 'center', gap: 12, padding: '10px 14px',
+      background: theme.surface, borderRadius: theme.cardRadius,
+      border: `.5px solid ${theme.border}`,
+      opacity: suspended ? 0.7 : 1,
+    }}>
+      <div style={{
+        width: 32, height: 32, borderRadius: 6,
+        background: `oklch(.78 .12 ${ws.hue})`, color: `oklch(.32 .14 ${ws.hue})`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 13, fontWeight: 700,
+      }}>{ws.name?.[0]?.toUpperCase() || 'W'}</div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button onClick={onOpen} style={{
+            background: 'transparent', border: 'none', padding: 0,
+            fontSize: 13, fontWeight: 600, color: theme.text,
+            cursor: 'pointer', fontFamily: 'inherit', textAlign: 'inherit',
+          }}>{ws.name}</button>
+          {suspended && (
+            <span style={{
+              padding: '1px 6px', borderRadius: 3,
+              background: '#FEE2E2', color: '#991B1B',
+              fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase',
+            }}>{rtl ? 'موقوفة' : 'suspended'}</span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: theme.muted, marginTop: 2 }}>
+          /{ws.slug} · {ws.memberCount} {rtl ? 'عضو' : 'members'} · {ws.boardCount} {rtl ? 'لوحة' : 'boards'}
+          {ws.owner && ` · ${rtl ? 'مالك:' : 'owner:'} ${ws.owner.email}`}
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: theme.mutedDim }}>{formatRelative(ws.createdAt)}</div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button onClick={onOpen} style={{
+          padding: '5px 10px', borderRadius: 5,
+          background: 'transparent', color: theme.text,
+          border: `.5px solid ${theme.border}`, fontSize: 11, fontWeight: 600,
+          cursor: 'pointer', fontFamily: 'inherit',
+        }}>{rtl ? 'تفاصيل' : 'Details'}</button>
+        {suspended ? (
+          <button onClick={onUnsuspend} style={{
+            padding: '5px 10px', borderRadius: 5,
+            background: theme.accent, color: theme.accentText,
+            border: 'none', fontSize: 11, fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>{rtl ? 'إعادة تفعيل' : 'Reactivate'}</button>
+        ) : (
+          <button onClick={onSuspend} style={{
+            padding: '5px 10px', borderRadius: 5,
+            background: 'transparent', color: '#B45309',
+            border: `.5px solid #FCD34D`, fontSize: 11, fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>{rtl ? 'إيقاف' : 'Suspend'}</button>
+        )}
+        <button onClick={onDelete} style={{
+          padding: '5px 10px', borderRadius: 5,
+          background: 'transparent', color: '#DC2626',
+          border: `.5px solid #FCA5A5`, fontSize: 11, fontWeight: 600,
+          cursor: 'pointer', fontFamily: 'inherit',
+        }}>{rtl ? 'حذف' : 'Delete'}</button>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceDetailDrawer({ theme, rtl, workspaceId, onClose, onSuspend, onUnsuspend, onDelete }) {
+  const [data, setData] = React.useState(null);
+  const [err, setErr] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setData(null); setErr(null);
+    fetchSystemWorkspaceDetail(workspaceId)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [workspaceId]);
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)',
+      zIndex: 50, display: 'flex',
+      justifyContent: rtl ? 'flex-start' : 'flex-end',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: 'min(560px, 100vw)', height: '100vh',
+        background: theme.bg, borderInlineStart: `.5px solid ${theme.border}`,
+        overflow: 'auto', display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          padding: '18px 24px', borderBottom: `.5px solid ${theme.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: theme.muted, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+              {rtl ? 'تفاصيل المساحة' : 'Workspace details'}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: theme.text, display: 'flex', alignItems: 'center', gap: 8 }}>
+              {data?.name || '…'}
+              {data?.suspendedAt && (
+                <span style={{
+                  padding: '2px 8px', borderRadius: 4,
+                  background: '#FEE2E2', color: '#991B1B',
+                  fontSize: 10, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase',
+                }}>{rtl ? 'موقوفة' : 'suspended'}</span>
+              )}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            padding: '6px 10px', borderRadius: 5,
+            background: 'transparent', color: theme.muted,
+            border: `.5px solid ${theme.border}`, fontSize: 12, fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>{rtl ? 'إغلاق' : 'Close'}</button>
+        </div>
+
+        {err && (
+          <div style={{ padding: 24, color: '#991B1B', fontSize: 13 }}>{err}</div>
+        )}
+        {!data && !err && (
+          <div style={{ padding: 24, color: theme.muted, fontSize: 13 }}>{rtl ? 'جاري التحميل…' : 'Loading…'}</div>
+        )}
+
+        {data && (
+          <>
+            <div style={{ padding: '14px 24px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              <MiniStat label={rtl ? 'أعضاء' : 'Members'} value={data.counts.members} theme={theme} />
+              <MiniStat label={rtl ? 'لوحات' : 'Boards'} value={data.counts.boards} theme={theme} />
+              <MiniStat label={rtl ? 'أقسام' : 'Departments'} value={data.counts.departments} theme={theme} />
+              <MiniStat label={rtl ? 'فِرق' : 'Teams'} value={data.counts.teams} theme={theme} />
+              <MiniStat label={rtl ? 'كروت نشطة' : 'Active cards'} value={data.counts.activeCards} theme={theme} />
+              <MiniStat label={rtl ? 'مكتمل ٣٠ يوم' : 'Done · 30d'} value={data.counts.completedLast30d} theme={theme} />
+            </div>
+
+            <div style={{ padding: '4px 24px 14px', fontSize: 11.5, color: theme.muted }}>
+              <div>/{data.slug}</div>
+              <div>{rtl ? 'أُنشئت:' : 'Created:'} {formatRelative(data.createdAt)}</div>
+              {data.suspendedAt && <div>{rtl ? 'أُوقفت:' : 'Suspended:'} {formatRelative(data.suspendedAt)}</div>}
+            </div>
+
+            <div style={{ padding: '0 24px 14px' }}>
+              <h3 style={{ fontSize: 12, fontWeight: 700, color: theme.muted, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                {rtl ? `الأعضاء (${data.members.length})` : `Members (${data.members.length})`}
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {data.members.map((m) => (
+                  <div key={m.id} style={{
+                    display: 'grid', gridTemplateColumns: '32px 1fr auto',
+                    alignItems: 'center', gap: 10, padding: '8px 10px',
+                    background: theme.surface, borderRadius: 6,
+                    border: `.5px solid ${theme.border}`,
+                    opacity: m.suspended ? 0.55 : 1,
+                  }}>
+                    <Avatar id={m.id} size={28} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: theme.text }}>{m.name}</div>
+                      <div style={{ fontSize: 10.5, color: theme.muted, marginTop: 1 }}>
+                        {m.email}{m.department ? ` · ${m.department}` : ''}
+                      </div>
+                    </div>
+                    <span style={{
+                      padding: '2px 7px', borderRadius: 3,
+                      background: theme.accentSoft, color: theme.accent,
+                      fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+                    }}>{m.role}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ padding: '0 24px 14px' }}>
+              <h3 style={{ fontSize: 12, fontWeight: 700, color: theme.muted, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                {rtl ? 'آخر اللوحات' : 'Recent boards'}
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {data.recentBoards.length === 0 && (
+                  <div style={{ fontSize: 12, color: theme.muted, padding: 8 }}>{rtl ? 'لا توجد لوحات' : 'No boards'}</div>
+                )}
+                {data.recentBoards.map((b) => (
+                  <div key={b.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '8px 10px', background: theme.surface, borderRadius: 6,
+                    border: `.5px solid ${theme.border}`, fontSize: 12.5,
+                  }}>
+                    <span style={{ color: theme.text, fontWeight: 500 }}>{b.title}</span>
+                    <span style={{ color: theme.mutedDim, fontSize: 10.5 }}>
+                      {b.listCount} {rtl ? 'عمود' : 'lists'} · {formatRelative(b.updatedAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 'auto', padding: '14px 24px',
+              borderTop: `.5px solid ${theme.border}`,
+              display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {data.suspendedAt ? (
+                <button onClick={() => onUnsuspend({ id: data.id, name: data.name })} style={{
+                  padding: '8px 14px', borderRadius: 6,
+                  background: theme.accent, color: theme.accentText,
+                  border: 'none', fontSize: 12.5, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}>{rtl ? 'إعادة تفعيل' : 'Reactivate'}</button>
+              ) : (
+                <button onClick={() => onSuspend({ id: data.id, name: data.name })} style={{
+                  padding: '8px 14px', borderRadius: 6,
+                  background: 'transparent', color: '#B45309',
+                  border: `.5px solid #FCD34D`, fontSize: 12.5, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}>{rtl ? 'إيقاف' : 'Suspend'}</button>
+              )}
+              <button onClick={() => onDelete({ id: data.id, name: data.name })} style={{
+                padding: '8px 14px', borderRadius: 6,
+                background: 'transparent', color: '#DC2626',
+                border: `.5px solid #FCA5A5`, fontSize: 12.5, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>{rtl ? 'حذف' : 'Delete'}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, theme }) {
+  return (
+    <div style={{
+      padding: '10px 12px',
+      background: theme.surface, borderRadius: 6,
+      border: `.5px solid ${theme.border}`,
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 600, color: theme.muted, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+      <div style={{ fontSize: 17, fontWeight: 700, color: theme.text, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
     </div>
   );
 }
