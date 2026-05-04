@@ -1,21 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
-import { requireAuth } from '../auth/middleware.js';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { loadMembership, canViewBoard, canEditBoard } from './auth.js';
 import { logActivity } from './activity.js';
 import { emitBoardEvent, actorSocketId } from '../realtime.js';
-import { optimizeImageInPlace } from '../lib/optimize.js';
+import { optimizeImageBuffer } from '../lib/optimize.js';
+import { putObject, getObjectBuffer, deleteObject } from '../lib/storage.js';
 
-const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads');
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
-
-async function ensureDir(p: string) {
-  await fs.mkdir(p, { recursive: true });
-}
 
 export async function attachmentRoutes(app: FastifyInstance) {
   // Custom auth: standard Bearer header OR ?token= query param.
@@ -51,47 +45,39 @@ export async function attachmentRoutes(app: FastifyInstance) {
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: 'no_file', message: 'No file uploaded' });
 
-    const ext = path.extname(file.filename || '').slice(0, 12);
-    const key = `${crypto.randomBytes(12).toString('hex')}${ext}`;
-    const cardDir = path.join(UPLOAD_ROOT, card.id);
-    await ensureDir(cardDir);
-    const dest = path.join(cardDir, key);
-
+    // Buffer the upload (with size cap) so we can both optimize it and
+    // hand it to S3 / local disk uniformly.
+    const chunks: Buffer[] = [];
     let totalBytes = 0;
-    const fh = await fs.open(dest, 'w');
-    try {
-      for await (const chunk of file.file) {
-        totalBytes += chunk.length;
-        if (totalBytes > MAX_BYTES) {
-          await fh.close();
-          await fs.unlink(dest).catch(() => {});
-          return reply.code(413).send({ error: 'too_large', message: 'File exceeds 10 MB' });
-        }
-        await fh.write(chunk);
+    for await (const chunk of file.file) {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BYTES) {
+        return reply.code(413).send({ error: 'too_large', message: 'File exceeds 10 MB' });
       }
-    } finally {
-      await fh.close();
+      chunks.push(chunk);
     }
-
     if (file.file.truncated) {
-      await fs.unlink(dest).catch(() => {});
       return reply.code(413).send({ error: 'too_large', message: 'File exceeds 10 MB' });
     }
+    let buffer: Buffer = Buffer.concat(chunks) as Buffer;
 
     // Shrink + re-encode photos to WebP — saves ~70% bandwidth.
     let storedMime = file.mimetype || 'application/octet-stream';
-    let storedSize = totalBytes;
-    let storedName = file.filename || key;
+    let storedName = file.filename || 'file';
     try {
-      const opt = await optimizeImageInPlace(dest, storedMime);
+      const opt = await optimizeImageBuffer(buffer, storedMime);
       if (opt) {
+        buffer = opt.buffer;
         storedMime = opt.mimeType;
-        storedSize = opt.sizeBytes;
         storedName = opt.filename(storedName);
       }
     } catch (err) {
       request.log.warn({ err }, 'image optimization failed, keeping original');
     }
+
+    const ext = path.extname(storedName).slice(0, 12) || '';
+    const key = `cards/${card.id}/${crypto.randomBytes(12).toString('hex')}${ext}`;
+    await putObject(key, buffer, storedMime);
 
     const att = await prisma.attachment.create({
       data: {
@@ -99,8 +85,8 @@ export async function attachmentRoutes(app: FastifyInstance) {
         uploadedById: request.userId!,
         filename: storedName,
         mimeType: storedMime,
-        sizeBytes: storedSize,
-        s3Key: `${card.id}/${key}`,
+        sizeBytes: buffer.length,
+        s3Key: key,
       },
     });
     await logActivity({
@@ -127,19 +113,16 @@ export async function attachmentRoutes(app: FastifyInstance) {
     if (reply.sent) return;
     if (!canViewBoard(request.membership!, att.card.list.board)) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
 
-    const fp = path.join(UPLOAD_ROOT, att.s3Key);
-    try {
-      await fs.access(fp);
-    } catch {
-      return reply.code(404).send({ error: 'file_missing', message: 'File no longer on disk' });
-    }
+    const buffer = await getObjectBuffer(att.s3Key);
+    if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'File no longer in storage' });
+
     return reply
       .header('content-type', att.mimeType)
       .header('content-disposition', `inline; filename="${encodeURIComponent(att.filename)}"`)
-      .send(await fs.readFile(fp));
+      .send(buffer);
   });
 
-  // Rename attachment (just changes the display filename, file on disk stays)
+  // Rename attachment (just changes the display filename, file in storage stays)
   app.patch<{ Params: { id: string }; Body: { filename?: string } }>('/attachments/:id', async (request, reply) => {
     const att = await prisma.attachment.findUnique({
       where: { id: request.params.id },
@@ -178,7 +161,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
     if (!canEditBoard(request.membership!, att.card.list.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit' });
 
     await prisma.attachment.delete({ where: { id: att.id } });
-    await fs.unlink(path.join(UPLOAD_ROOT, att.s3Key)).catch(() => {});
+    await deleteObject(att.s3Key);
     emitBoardEvent(att.card.list.boardId, 'card:detail_changed', { cardId: att.cardId, kind: 'attachment_removed' }, actorSocketId(request));
     return reply.code(204).send();
   });

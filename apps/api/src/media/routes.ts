@@ -1,15 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
-import sharp from 'sharp';
 import { Role } from '@prisma/client';
 import { prisma } from '../db.js';
-import { requireAuth } from '../auth/middleware.js';
 import { verifyAccessToken } from '../auth/tokens.js';
-import { optimizeImageInPlace } from '../lib/optimize.js';
+import { optimizeImageBuffer, generateThumbBuffer } from '../lib/optimize.js';
+import { putObject, getObjectBuffer, deleteObject } from '../lib/storage.js';
 
-const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'media');
 const MAX_BYTES = 100 * 1024 * 1024; // 100 MB — global standard for collaboration tools
 
 // Block executable / system file types regardless of mime sniff. Same blocklist
@@ -20,10 +17,6 @@ const BLOCKED_EXTS = new Set([
 ]);
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif']);
-
-async function ensureDir(p: string) {
-  await fs.mkdir(p, { recursive: true });
-}
 
 // Visibility: members of the department, dept_manager (head) of that dept,
 // or workspace admins. Returns the membership row or null.
@@ -123,62 +116,53 @@ export async function mediaRoutes(app: FastifyInstance) {
       return reply.code(415).send({ error: 'blocked_type', message: 'This file type is not allowed' });
     }
 
-    const key = `${crypto.randomBytes(12).toString('hex')}${ext}`;
-    const deptDir = path.join(UPLOAD_ROOT, request.params.id);
-    await ensureDir(deptDir);
-    const dest = path.join(deptDir, key);
-
+    // Buffer the upload with size cap, then optimize + generate thumb in
+    // memory and push to storage (S3 or local disk) atomically.
+    const chunks: Buffer[] = [];
     let totalBytes = 0;
-    const fh = await fs.open(dest, 'w');
-    try {
-      for await (const chunk of file.file) {
-        totalBytes += chunk.length;
-        if (totalBytes > MAX_BYTES) {
-          await fh.close();
-          await fs.unlink(dest).catch(() => {});
-          return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
-        }
-        await fh.write(chunk);
+    for await (const chunk of file.file) {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BYTES) {
+        return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
       }
-    } finally {
-      await fh.close();
+      chunks.push(chunk);
     }
     if (file.file.truncated) {
-      await fs.unlink(dest).catch(() => {});
       return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
     }
+    let buffer: Buffer = Buffer.concat(chunks) as Buffer;
 
-    // Shrink + re-encode photos to WebP before generating the thumbnail
-    // (so the thumb derives from the already-rotated optimized image).
     let storedMime = file.mimetype || 'application/octet-stream';
-    let storedSize = totalBytes;
-    let storedName = file.filename || key;
+    let storedName = file.filename || `file${ext}`;
     try {
-      const opt = await optimizeImageInPlace(dest, storedMime);
+      const opt = await optimizeImageBuffer(buffer, storedMime);
       if (opt) {
+        buffer = opt.buffer;
         storedMime = opt.mimeType;
-        storedSize = opt.sizeBytes;
         storedName = opt.filename(storedName);
       }
     } catch (err) {
       request.log.warn({ err }, 'media optimization failed, keeping original');
     }
 
-    // Generate a thumbnail for images. Best-effort — failures don't block upload.
-    let thumbKey: string | null = null;
-    if (IMAGE_MIMES.has(storedMime)) {
-      const thumbName = `${path.basename(key, ext)}_thumb.webp`;
-      const thumbDest = path.join(deptDir, thumbName);
-      try {
-        await sharp(dest)
-          .rotate() // respect EXIF orientation
-          .resize({ width: 320, height: 320, fit: 'cover' })
-          .webp({ quality: 78 })
-          .toFile(thumbDest);
-        thumbKey = `${request.params.id}/${thumbName}`;
-      } catch (err) {
-        request.log.warn({ err }, 'thumbnail generation failed');
+    // Generate thumbnail buffer (images only). Best-effort.
+    let thumbBuffer: Buffer | null = null;
+    try {
+      if (IMAGE_MIMES.has(storedMime)) {
+        thumbBuffer = await generateThumbBuffer(buffer, storedMime);
       }
+    } catch (err) {
+      request.log.warn({ err }, 'thumbnail generation failed');
+    }
+
+    const finalExt = path.extname(storedName).toLowerCase() || ext || '';
+    const baseKey = `media/${request.params.id}/${crypto.randomBytes(12).toString('hex')}`;
+    const objectKey = `${baseKey}${finalExt}`;
+    const thumbKey = thumbBuffer ? `${baseKey}_thumb.webp` : null;
+
+    await putObject(objectKey, buffer, storedMime);
+    if (thumbBuffer && thumbKey) {
+      await putObject(thumbKey, thumbBuffer, 'image/webp');
     }
 
     const media = await prisma.mediaItem.create({
@@ -188,8 +172,8 @@ export async function mediaRoutes(app: FastifyInstance) {
         title: storedName,
         filename: storedName,
         mimeType: storedMime,
-        sizeBytes: storedSize,
-        s3Key: `${request.params.id}/${key}`,
+        sizeBytes: buffer.length,
+        s3Key: objectKey,
         thumbS3Key: thumbKey,
       },
     });
@@ -236,10 +220,8 @@ export async function mediaRoutes(app: FastifyInstance) {
     if (!isOwner && !isManager) return reply.code(403).send({ error: 'forbidden', message: 'Only the uploader or a department manager can delete' });
 
     await prisma.mediaItem.delete({ where: { id: item.id } });
-    await fs.unlink(path.join(UPLOAD_ROOT, item.s3Key)).catch(() => {});
-    if (item.thumbS3Key) {
-      await fs.unlink(path.join(UPLOAD_ROOT, item.thumbS3Key)).catch(() => {});
-    }
+    await deleteObject(item.s3Key);
+    if (item.thumbS3Key) await deleteObject(item.thumbS3Key);
     return reply.code(204).send();
   });
 
@@ -250,14 +232,12 @@ export async function mediaRoutes(app: FastifyInstance) {
     const v = await deptViewerMembership(request.userId!, item.departmentId);
     if (!v.allowed) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
 
-    const fp = path.join(UPLOAD_ROOT, item.s3Key);
-    try { await fs.access(fp); } catch {
-      return reply.code(404).send({ error: 'file_missing', message: 'File no longer on disk' });
-    }
+    const buffer = await getObjectBuffer(item.s3Key);
+    if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'File no longer in storage' });
     return reply
       .header('content-type', item.mimeType)
       .header('content-disposition', `inline; filename="${encodeURIComponent(item.filename)}"`)
-      .send(await fs.readFile(fp));
+      .send(buffer);
   });
 
   // Thumbnail stream — falls back to 404 if not generated (non-image types).
@@ -267,13 +247,11 @@ export async function mediaRoutes(app: FastifyInstance) {
     const v = await deptViewerMembership(request.userId!, item.departmentId);
     if (!v.allowed) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
 
-    const fp = path.join(UPLOAD_ROOT, item.thumbS3Key);
-    try { await fs.access(fp); } catch {
-      return reply.code(404).send({ error: 'file_missing', message: 'Thumb no longer on disk' });
-    }
+    const buffer = await getObjectBuffer(item.thumbS3Key);
+    if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'Thumb no longer in storage' });
     return reply
       .header('content-type', 'image/webp')
       .header('cache-control', 'private, max-age=86400')
-      .send(await fs.readFile(fp));
+      .send(buffer);
   });
 }

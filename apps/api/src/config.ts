@@ -19,6 +19,13 @@ const Schema = z.object({
   SENDGRID_API_KEY: z.string().default(''),
   SENDGRID_FROM_EMAIL: z.string().default('noreply@sarsync.com'),
   SENDGRID_FROM_NAME: z.string().default('SarSync'),
+  // AWS S3 for file storage. When AWS_S3_BUCKET is set, every new upload
+  // (card attachments, media library, chat files) is written to S3. When
+  // unset, files live on local disk under ./uploads (dev default).
+  // Credentials are read by the SDK from env: AWS_ACCESS_KEY_ID +
+  // AWS_SECRET_ACCESS_KEY (or an IAM role on EC2 — preferred in prod).
+  AWS_REGION: z.string().default('us-east-1'),
+  AWS_S3_BUCKET: z.string().default(''),
 });
 
 const parsed = Schema.safeParse(process.env);

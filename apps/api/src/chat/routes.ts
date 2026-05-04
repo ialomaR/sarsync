@@ -1,15 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
-import sharp from 'sharp';
 import { Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { emitDeptEvent, actorSocketId } from '../realtime.js';
 import { notify } from '../notifications/service.js';
-import { optimizeImageInPlace } from '../lib/optimize.js';
+import { optimizeImageBuffer, generateThumbBuffer } from '../lib/optimize.js';
+import { putObject, getObjectBuffer, deleteObject, copyObject } from '../lib/storage.js';
 
 // Markup convention: @[Display Name](userId)
 // Only IDs are trusted on the server; the display name is just for rendering.
@@ -22,10 +21,6 @@ function extractMentions(body: string): string[] {
   return [...ids];
 }
 
-const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'chat');
-// Media library uses a parallel directory; we copy chat files into it when
-// the user clicks "Save to media library".
-const MEDIA_UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'media');
 const MAX_BYTES = 100 * 1024 * 1024; // 100 MB — same as media library
 // 2 minutes — short enough that the chat reads as an audit trail, long
 // enough to fix typos. Applies to both edits and self-deletes. Department
@@ -38,10 +33,6 @@ const BLOCKED_EXTS = new Set([
 ]);
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif']);
-
-async function ensureDir(p: string) {
-  await fs.mkdir(p, { recursive: true });
-}
 
 // Same visibility rule as media: dept members + admins. Returns membership
 // or null. Cross-dept board grants do NOT confer chat access.
@@ -390,61 +381,49 @@ export async function chatRoutes(app: FastifyInstance) {
       return reply.code(415).send({ error: 'blocked_type', message: 'This file type is not allowed' });
     }
 
-    const key = `${crypto.randomBytes(12).toString('hex')}${ext}`;
-    const deptDir = path.join(UPLOAD_ROOT, request.params.id);
-    await ensureDir(deptDir);
-    const dest = path.join(deptDir, key);
-
+    // Buffer the upload with size cap, then optimize + thumb in memory and
+    // push to storage (S3 or local disk).
+    const chunks: Buffer[] = [];
     let totalBytes = 0;
-    const fh = await fs.open(dest, 'w');
-    try {
-      for await (const chunk of file.file) {
-        totalBytes += chunk.length;
-        if (totalBytes > MAX_BYTES) {
-          await fh.close();
-          await fs.unlink(dest).catch(() => {});
-          return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
-        }
-        await fh.write(chunk);
+    for await (const chunk of file.file) {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BYTES) {
+        return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
       }
-    } finally {
-      await fh.close();
+      chunks.push(chunk);
     }
     if (file.file.truncated) {
-      await fs.unlink(dest).catch(() => {});
       return reply.code(413).send({ error: 'too_large', message: 'File exceeds 100 MB' });
     }
+    let buffer: Buffer = Buffer.concat(chunks) as Buffer;
 
-    // Shrink + re-encode photos to WebP before deriving the thumbnail.
     let storedMime = file.mimetype || 'application/octet-stream';
-    let storedSize = totalBytes;
-    let storedName = file.filename || key;
+    let storedName = file.filename || `file${ext}`;
     try {
-      const opt = await optimizeImageInPlace(dest, storedMime);
+      const opt = await optimizeImageBuffer(buffer, storedMime);
       if (opt) {
+        buffer = opt.buffer;
         storedMime = opt.mimeType;
-        storedSize = opt.sizeBytes;
         storedName = opt.filename(storedName);
       }
     } catch (err) {
       request.log.warn({ err }, 'chat image optimization failed, keeping original');
     }
 
-    let thumbKey: string | null = null;
-    if (IMAGE_MIMES.has(storedMime)) {
-      const thumbName = `${path.basename(key, ext)}_thumb.webp`;
-      const thumbDest = path.join(deptDir, thumbName);
-      try {
-        await sharp(dest)
-          .rotate()
-          .resize({ width: 480, height: 480, fit: 'inside' })
-          .webp({ quality: 78 })
-          .toFile(thumbDest);
-        thumbKey = `${request.params.id}/${thumbName}`;
-      } catch (err) {
-        request.log.warn({ err }, 'chat thumb generation failed');
-      }
+    let thumbBuffer: Buffer | null = null;
+    try {
+      if (IMAGE_MIMES.has(storedMime)) thumbBuffer = await generateThumbBuffer(buffer, storedMime);
+    } catch (err) {
+      request.log.warn({ err }, 'chat thumb generation failed');
     }
+
+    const finalExt = path.extname(storedName).toLowerCase() || ext || '';
+    const baseKey = `chat/${request.params.id}/${crypto.randomBytes(12).toString('hex')}`;
+    const objectKey = `${baseKey}${finalExt}`;
+    const thumbKey = thumbBuffer ? `${baseKey}_thumb.webp` : null;
+
+    await putObject(objectKey, buffer, storedMime);
+    if (thumbBuffer && thumbKey) await putObject(thumbKey, thumbBuffer, 'image/webp');
 
     // Voice messages: client reports duration in X-Duration-Ms header.
     // We trust it for display only — the file content is the source of truth.
@@ -455,8 +434,8 @@ export async function chatRoutes(app: FastifyInstance) {
       data: {
         filename: storedName,
         mimeType: storedMime,
-        sizeBytes: storedSize,
-        s3Key: `${request.params.id}/${key}`,
+        sizeBytes: buffer.length,
+        s3Key: objectKey,
         thumbS3Key: thumbKey,
         durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,
       },
@@ -505,23 +484,19 @@ export async function chatRoutes(app: FastifyInstance) {
     }
 
     const ext = path.extname(att.s3Key);
-    const newKey = `${crypto.randomBytes(12).toString('hex')}${ext}`;
-    const newRel = `${att.message.departmentId}/${newKey}`;
-    const deptDir = path.join(MEDIA_UPLOAD_ROOT, att.message.departmentId);
-    await ensureDir(deptDir);
+    const baseKey = `media/${att.message.departmentId}/${crypto.randomBytes(12).toString('hex')}`;
+    const newKey = `${baseKey}${ext}`;
 
-    const src = path.join(UPLOAD_ROOT, att.s3Key);
-    const dst = path.join(MEDIA_UPLOAD_ROOT, newRel);
-    await fs.copyFile(src, dst);
+    const ok = await copyObject(att.s3Key, newKey);
+    if (!ok) {
+      return reply.code(500).send({ error: 'copy_failed', message: 'Could not copy file into media library' });
+    }
 
-    let thumbRel: string | null = null;
+    let thumbKey: string | null = null;
     if (att.thumbS3Key) {
-      const thumbName = `${path.basename(newKey, ext)}_thumb.webp`;
-      thumbRel = `${att.message.departmentId}/${thumbName}`;
-      const thumbSrc = path.join(UPLOAD_ROOT, att.thumbS3Key);
-      const thumbDst = path.join(MEDIA_UPLOAD_ROOT, thumbRel);
-      try { await fs.copyFile(thumbSrc, thumbDst); }
-      catch { thumbRel = null; }
+      const thumbDest = `${baseKey}_thumb.webp`;
+      const thumbOk = await copyObject(att.thumbS3Key, thumbDest);
+      if (thumbOk) thumbKey = thumbDest;
     }
 
     const media = await prisma.mediaItem.create({
@@ -532,8 +507,8 @@ export async function chatRoutes(app: FastifyInstance) {
         filename: att.filename,
         mimeType: att.mimeType,
         sizeBytes: att.sizeBytes,
-        s3Key: newRel,
-        thumbS3Key: thumbRel,
+        s3Key: newKey,
+        thumbS3Key: thumbKey,
         source: 'chat',
         chatAttachmentId: att.id,
       },
@@ -587,14 +562,12 @@ export async function chatRoutes(app: FastifyInstance) {
         const v = await deptMembership(request.userId!, att.message.departmentId);
         if (!v) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
       }
-      const fp = path.join(UPLOAD_ROOT, att.s3Key);
-      try { await fs.access(fp); } catch {
-        return reply.code(404).send({ error: 'file_missing', message: 'File no longer on disk' });
-      }
+      const buffer = await getObjectBuffer(att.s3Key);
+      if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'File no longer in storage' });
       return reply
         .header('content-type', att.mimeType)
         .header('content-disposition', `inline; filename="${encodeURIComponent(att.filename)}"`)
-        .send(await fs.readFile(fp));
+        .send(buffer);
     });
 
     instance.get<{ Params: { id: string } }>('/chat/attachments/:id/thumb', async (request, reply) => {
@@ -607,14 +580,12 @@ export async function chatRoutes(app: FastifyInstance) {
         const v = await deptMembership(request.userId!, att.message.departmentId);
         if (!v) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
       }
-      const fp = path.join(UPLOAD_ROOT, att.thumbS3Key);
-      try { await fs.access(fp); } catch {
-        return reply.code(404).send({ error: 'file_missing', message: 'Thumb no longer on disk' });
-      }
+      const buffer = await getObjectBuffer(att.thumbS3Key);
+      if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'Thumb no longer in storage' });
       return reply
         .header('content-type', 'image/webp')
         .header('cache-control', 'private, max-age=86400')
-        .send(await fs.readFile(fp));
+        .send(buffer);
     });
   });
 }
