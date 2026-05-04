@@ -1121,14 +1121,25 @@ export function DepartmentView({ themeName, accent, rtl, deptId }) {
 
   const id = deptId || defaultDeptId;
 
+  const [kpis, setKpis] = React.useState(null);
+
   React.useEffect(() => {
     if (!id) return;
     let cancelled = false;
     (async () => {
       setState({ status: 'loading', dept: null, error: null });
+      setKpis(null);
       try {
-        const dept = await api(`/departments/${id}/detail`);
-        if (!cancelled) setState({ status: 'ready', dept, error: null });
+        // Both in parallel — KPIs are best-effort; we still render even if
+        // they fail.
+        const [dept, kpisRes] = await Promise.all([
+          api(`/departments/${id}/detail`),
+          api(`/departments/${id}/kpis`).catch(() => null),
+        ]);
+        if (!cancelled) {
+          setState({ status: 'ready', dept, error: null });
+          if (kpisRes) setKpis(kpisRes);
+        }
       } catch (err) {
         if (!cancelled) setState({ status: 'error', dept: null, error: err });
       }
@@ -1180,10 +1191,21 @@ export function DepartmentView({ themeName, accent, rtl, deptId }) {
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <StatChip label={rtl ? 'مشاريع' : 'Boards'} value={dept.projectCount} accent={theme.accent} theme={theme} />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <StatChip label={rtl ? 'مشاريع' : 'Boards'} value={kpis?.department.boardCount ?? dept.projectCount} accent={theme.accent} theme={theme} />
             <StatChip label={rtl ? 'الفرق' : 'Teams'} value={dept.teamCount} theme={theme} />
             <StatChip label={rtl ? 'الأعضاء' : 'Members'} value={dept.memberCount} theme={theme} />
+            {kpis && (
+              <>
+                <StatChip label={rtl ? 'مهام نشطة' : 'Active tasks'} value={kpis.department.activeTotal} theme={theme} />
+                <StatChip label={rtl ? 'متأخرة' : 'Overdue'}
+                  value={kpis.department.overdueTotal}
+                  accent={kpis.department.overdueTotal > 0 ? '#DC2626' : undefined}
+                  theme={theme} />
+                <StatChip label={rtl ? 'مكتملة (٧ أيام)' : 'Completed (7d)'} value={kpis.department.completedThisWeek} theme={theme} />
+                <StatChip label={rtl ? 'مكتملة (٣٠ يوم)' : 'Completed (30d)'} value={kpis.department.completedThisMonth} theme={theme} />
+              </>
+            )}
           </div>
         </div>
 
@@ -1191,7 +1213,7 @@ export function DepartmentView({ themeName, accent, rtl, deptId }) {
 
         <div style={{ padding: '18px 28px 32px' }}>
           {tab === 'projects' && <DeptProjectsTab theme={theme} rtl={rtl} dept={dept} navigate={navigate} />}
-          {tab === 'members' && <DeptMembersTab theme={theme} rtl={rtl} dept={dept} />}
+          {tab === 'members' && <DeptMembersTab theme={theme} rtl={rtl} dept={dept} kpis={kpis} />}
           {tab === 'media' && <MediaLibrary theme={theme} rtl={rtl} deptId={dept.id} />}
           {tab === 'chat' && <DeptChat theme={theme} rtl={rtl} deptId={dept.id} />}
         </div>
@@ -1287,34 +1309,73 @@ function DeptProjectsTab({ theme, rtl, dept, navigate }) {
   );
 }
 
-function DeptMembersTab({ theme, rtl, dept }) {
+function DeptMembersTab({ theme, rtl, dept, kpis }) {
   const navigate = useNavigate();
+  // KPIs come keyed by userId — merge with member rows so we can show
+  // active/overdue/completed counts inline.
+  const kpiByUser = React.useMemo(() => {
+    const m = new Map();
+    if (kpis?.members) for (const k of kpis.members) m.set(k.userId, k);
+    return m;
+  }, [kpis]);
+
   return (
     <>
       <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.text, margin: '0 0 10px' }}>
         {rtl ? `أعضاء القسم (${dept.members.length})` : `Department members (${dept.members.length})`}
       </h2>
       <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8,
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 8,
       }}>
-        {dept.members.map((m) => (
-          <button key={m.userId} onClick={() => navigate(`/u/${m.userId}`)} style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '10px 12px', textAlign: rtl ? 'right' : 'left',
-            background: theme.surface, borderRadius: theme.cardRadius,
-            border: `.5px solid ${theme.border}`, cursor: 'pointer',
-            fontFamily: 'inherit',
-          }}>
-            <Avatar id={m.userId} size={32} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</div>
-              <div style={{ fontSize: 11, color: theme.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.email}</div>
-            </div>
-            <RoleBadge role={m.role} />
-          </button>
-        ))}
+        {dept.members.map((m) => {
+          const k = kpiByUser.get(m.userId);
+          return (
+            <button key={m.userId} onClick={() => navigate(`/u/${m.userId}`)} style={{
+              display: 'flex', flexDirection: 'column', gap: 8,
+              padding: '12px 14px', textAlign: rtl ? 'right' : 'left',
+              background: theme.surface, borderRadius: theme.cardRadius,
+              border: `.5px solid ${theme.border}`, cursor: 'pointer',
+              fontFamily: 'inherit', alignItems: 'stretch',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Avatar id={m.userId} size={32} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</div>
+                  <div style={{ fontSize: 11, color: theme.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.email}</div>
+                </div>
+                <RoleBadge role={m.role} />
+              </div>
+              {k && (
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4,
+                  paddingTop: 8, borderTop: `.5px solid ${theme.border}`,
+                }}>
+                  <MiniStat theme={theme} value={k.active} label={rtl ? 'نشطة' : 'Active'} />
+                  <MiniStat theme={theme} value={k.overdue} label={rtl ? 'متأخرة' : 'Overdue'}
+                    color={k.overdue > 0 ? '#DC2626' : undefined} />
+                  <MiniStat theme={theme} value={k.completedThisMonth} label={rtl ? 'هذا الشهر' : 'This month'}
+                    color={k.completedThisMonth > 0 ? '#0E7C66' : undefined} />
+                  <MiniStat theme={theme} value={k.completedTotal} label={rtl ? 'إجمالي' : 'Total done'} />
+                </div>
+              )}
+            </button>
+          );
+        })}
       </div>
     </>
+  );
+}
+
+function MiniStat({ theme, value, label, color }) {
+  return (
+    <div style={{ textAlign: 'center', minWidth: 0 }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: color || theme.text, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 9.5, color: theme.muted, marginTop: 2, letterSpacing: '.02em' }}>
+        {label}
+      </div>
+    </div>
   );
 }
 

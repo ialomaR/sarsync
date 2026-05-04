@@ -221,6 +221,108 @@ export async function adminRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── Department KPIs ─────────────────────────────────────────────────────
+  // Aggregate stats for the department + a per-member row with each
+  // person's task counts. Used by the Department page header + Members tab.
+  // Visible to anyone in the workspace (admin) or in the department.
+
+  app.get<{ Params: { id: string } }>('/departments/:id/kpis', async (request, reply) => {
+    const dept = await prisma.department.findUnique({
+      where: { id: request.params.id },
+      include: {
+        members: {
+          include: { user: { select: { id: true, firstName: true, lastName: true, avatarColor: true } } },
+        },
+      },
+    });
+    if (!dept) return reply.code(404).send({ error: 'not_found' });
+    await loadMembership(request, reply, dept.workspaceId);
+    if (reply.sent) return;
+
+    const now = new Date();
+    const lastWeek  = new Date(now.getTime() - 7  * 24 * 3600_000);
+    const lastMonth = new Date(now.getTime() - 30 * 24 * 3600_000);
+
+    const userIds = dept.members.map((m) => m.user.id);
+    const inDept  = { archivedAt: null, list: { board: { departmentId: dept.id, archivedAt: null } } } as const;
+
+    // ── Department-wide totals ────────────────────────────────────────────
+    const [activeTotal, overdueTotal, completedWeek, completedMonth, boardCount] = await Promise.all([
+      prisma.card.count({ where: { ...inDept, completedAt: null } }),
+      prisma.card.count({ where: { ...inDept, completedAt: null, due: { lt: now } } }),
+      prisma.card.count({ where: { ...inDept, completedAt: { gte: lastWeek } } }),
+      prisma.card.count({ where: { ...inDept, completedAt: { gte: lastMonth } } }),
+      prisma.board.count({ where: { departmentId: dept.id, archivedAt: null } }),
+    ]);
+
+    // ── Per-member rollups ────────────────────────────────────────────────
+    // groupBy on cardMember scoped to cards in this dept.
+    type GB = Array<{ userId: string; _count: { _all: number } }>;
+    const [active, overdue, monthDone, allDone, last] = await Promise.all<GB | unknown>([
+      prisma.cardMember.groupBy({
+        by: ['userId'],
+        where: { userId: { in: userIds }, card: { ...inDept, completedAt: null } },
+        _count: { _all: true },
+      }),
+      prisma.cardMember.groupBy({
+        by: ['userId'],
+        where: { userId: { in: userIds }, card: { ...inDept, completedAt: null, due: { lt: now } } },
+        _count: { _all: true },
+      }),
+      prisma.cardMember.groupBy({
+        by: ['userId'],
+        where: { userId: { in: userIds }, card: { ...inDept, completedAt: { gte: lastMonth } } },
+        _count: { _all: true },
+      }),
+      prisma.cardMember.groupBy({
+        by: ['userId'],
+        where: { userId: { in: userIds }, card: { ...inDept, completedAt: { not: null } } },
+        _count: { _all: true },
+      }),
+      // Last activity per user (across the whole workspace — easier and
+      // more meaningful than scoping to dept)
+      prisma.activity.groupBy({
+        by: ['actorId'],
+        where: { actorId: { in: userIds }, board: { workspaceId: dept.workspaceId } },
+        _max: { createdAt: true },
+      }),
+    ]);
+
+    const tally = (rows: unknown): Map<string, number> => {
+      const m = new Map<string, number>();
+      for (const r of rows as GB) m.set(r.userId, r._count._all);
+      return m;
+    };
+    const activeMap   = tally(active);
+    const overdueMap  = tally(overdue);
+    const monthMap    = tally(monthDone);
+    const totalMap    = tally(allDone);
+    const lastMap     = new Map<string, string | null>();
+    for (const r of last as Array<{ actorId: string; _max: { createdAt: Date | null } }>) {
+      lastMap.set(r.actorId, r._max.createdAt ? r._max.createdAt.toISOString() : null);
+    }
+
+    return reply.send({
+      department: {
+        id: dept.id, name: dept.name, nameAr: dept.nameAr, hue: dept.hue,
+        activeTotal, overdueTotal, completedThisWeek: completedWeek,
+        completedThisMonth: completedMonth, boardCount,
+        memberCount: userIds.length,
+      },
+      members: dept.members.map((m) => ({
+        userId: m.user.id,
+        name: `${m.user.firstName} ${m.user.lastName}`.trim(),
+        avatarColor: m.user.avatarColor,
+        role: m.role,
+        active: activeMap.get(m.user.id) || 0,
+        overdue: overdueMap.get(m.user.id) || 0,
+        completedThisMonth: monthMap.get(m.user.id) || 0,
+        completedTotal: totalMap.get(m.user.id) || 0,
+        lastActiveAt: lastMap.get(m.user.id) || null,
+      })),
+    });
+  });
+
   // ── Teams ───────────────────────────────────────────────────────────────
 
   app.get<{ Params: { workspaceId: string } }>('/workspaces/:workspaceId/teams', async (request, reply) => {

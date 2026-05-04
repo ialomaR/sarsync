@@ -231,3 +231,7 @@ export async function suspendUser(id) {
 export async function unsuspendUser(id) {
   return api(`/system/users/${id}/unsuspend`, { method: 'POST' });
 }
+
+export async function fetchDeptKpis(deptId) {
+  return api(`/departments/${deptId}/kpis`);
+}
