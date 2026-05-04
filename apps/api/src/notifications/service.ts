@@ -3,9 +3,15 @@
 //
 // Never creates a notification when the actor is the same as the recipient
 // (people don't need to be notified about their own actions).
+//
+// In-app notification is always created (DB row + socket push). Email is
+// also sent for "important" kinds — the standard pattern in Linear/Asana/
+// GitHub: people open their inbox before they open the app.
 
 import { prisma } from '../db.js';
+import { config } from '../config.js';
 import { emitUserEvent } from '../realtime.js';
+import { sendEmail, brandedHtml } from '../lib/email.js';
 
 export interface NotifyArgs {
   recipientId: string;
@@ -16,6 +22,25 @@ export interface NotifyArgs {
   body?: string;
   link?: string;
   meta?: Record<string, unknown>;
+}
+
+// Kinds that trigger an email in addition to the in-app notification.
+// All other kinds (e.g. invite_accepted) stay in-app only.
+const EMAIL_KINDS = new Set([
+  'card_assigned',
+  'comment_added',
+  'chat_mention',
+  'card_due_soon',
+]);
+
+function emailSubjectFor(kind: string, fallback: string, actorName: string): string {
+  switch (kind) {
+    case 'card_assigned':  return `${actorName} assigned you to a card`;
+    case 'comment_added':  return `${actorName} commented on a card`;
+    case 'chat_mention':   return `${actorName} mentioned you`;
+    case 'card_due_soon':  return 'A card is due soon';
+    default: return fallback;
+  }
 }
 
 export async function notify(args: NotifyArgs) {
@@ -32,8 +57,12 @@ export async function notify(args: NotifyArgs) {
         link: args.link ?? null,
         meta: (args.meta ?? null) as never,
       },
-      include: { actor: { select: { id: true, firstName: true, lastName: true, avatarColor: true } } },
+      include: {
+        actor: { select: { id: true, firstName: true, lastName: true, avatarColor: true } },
+        recipient: { select: { id: true, email: true, firstName: true, suspendedAt: true } },
+      },
     });
+
     // Push to the recipient's socket if connected
     emitUserEvent(args.recipientId, 'notification:new', {
       id: created.id,
@@ -50,11 +79,42 @@ export async function notify(args: NotifyArgs) {
         color: created.actor.avatarColor,
       } : null,
     });
+
+    // Email for "important" kinds. Suspended accounts are skipped.
+    if (EMAIL_KINDS.has(created.kind) && created.recipient && !created.recipient.suspendedAt) {
+      const actorName = created.actor
+        ? `${created.actor.firstName} ${created.actor.lastName}`.trim()
+        : 'Someone';
+      const subject = emailSubjectFor(created.kind, created.title, actorName);
+      const absLink = created.link ? `${config.WEB_ORIGIN}${created.link}` : config.WEB_ORIGIN;
+      const heading = `${actorName} ${created.title}`.trim();
+      const previewBody = created.body
+        ? `<p style="background:#F3F4F6;padding:10px 12px;border-radius:6px;margin:12px 0;color:#374151;font-size:13px;">${escapeHtml(created.body)}</p>`
+        : '';
+
+      sendEmail({
+        to: created.recipient.email,
+        subject,
+        text: `${heading}\n\n${created.body || ''}\n\nOpen: ${absLink}`,
+        html: brandedHtml({
+          heading,
+          body: previewBody,
+          cta: { label: 'Open in SarSync', url: absLink },
+        }),
+        reason: `notif_${created.kind}`,
+      }).catch(() => {});
+    }
     return created;
   } catch (err) {
     console.error('notify() failed', err);
     return null;
   }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c] || c));
 }
 
 // Notify all card members except the actor.
