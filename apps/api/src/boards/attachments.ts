@@ -7,7 +7,7 @@ import { loadMembership, canViewBoard, canEditBoard } from './auth.js';
 import { logActivity } from './activity.js';
 import { emitBoardEvent, actorSocketId } from '../realtime.js';
 import { optimizeImageBuffer } from '../lib/optimize.js';
-import { putObject, getObjectBuffer, deleteObject } from '../lib/storage.js';
+import { putObject, getObjectBuffer, deleteObject, copyObject } from '../lib/storage.js';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -101,6 +101,74 @@ export async function attachmentRoutes(app: FastifyInstance) {
       url: `/api/attachments/${att.id}`,
     });
   });
+
+  // Attach an existing media-library item to a card. Copies the file under
+  // a card-scoped key so the attachment is independent (deleting the card
+  // attachment doesn't touch the media library, and vice versa).
+  app.post<{ Params: { id: string }; Body: { mediaId?: string } }>(
+    '/cards/:id/attachments/from-media',
+    async (request, reply) => {
+      const card = await prisma.card.findUnique({
+        where: { id: request.params.id },
+        include: { list: { include: { board: true } } },
+      });
+      if (!card) return reply.code(404).send({ error: 'not_found', message: 'Card not found' });
+      await loadMembership(request, reply, card.list.board.workspaceId);
+      if (reply.sent) return;
+      if (!canEditBoard(request.membership!, card.list.board)) {
+        return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit' });
+      }
+
+      const mediaId = request.body?.mediaId;
+      if (!mediaId) return reply.code(400).send({ error: 'no_media', message: 'mediaId required' });
+
+      const media = await prisma.mediaItem.findUnique({ where: { id: mediaId } });
+      if (!media) return reply.code(404).send({ error: 'not_found', message: 'Media item not found' });
+
+      // Visibility: the user must have access to the department the media
+      // lives in. We piggyback on workspace membership + dept access rules.
+      const m = request.membership!;
+      const sameWorkspace = await prisma.department.findUnique({
+        where: { id: media.departmentId },
+        select: { workspaceId: true },
+      });
+      if (!sameWorkspace || sameWorkspace.workspaceId !== m.workspaceId) {
+        return reply.code(403).send({ error: 'forbidden', message: 'Media not in your workspace' });
+      }
+      if (m.role !== 'admin' && m.departmentId && m.departmentId !== media.departmentId) {
+        return reply.code(403).send({ error: 'forbidden', message: 'Media belongs to another department' });
+      }
+
+      const ext = path.extname(media.filename).slice(0, 12) || '';
+      const destKey = `cards/${card.id}/${crypto.randomBytes(12).toString('hex')}${ext}`;
+      const copied = await copyObject(media.s3Key, destKey);
+      if (!copied) {
+        return reply.code(500).send({ error: 'copy_failed', message: 'Could not copy media file' });
+      }
+
+      const att = await prisma.attachment.create({
+        data: {
+          cardId: card.id,
+          uploadedById: request.userId!,
+          filename: media.filename,
+          mimeType: media.mimeType,
+          sizeBytes: media.sizeBytes,
+          s3Key: destKey,
+        },
+      });
+      await logActivity({
+        boardId: card.list.boardId, actorId: request.userId!,
+        verb: 'card_described', targetType: 'card', targetId: card.id,
+        meta: { cardTitle: card.title, attachment: att.filename, fromMedia: true },
+      });
+      emitBoardEvent(card.list.boardId, 'card:detail_changed', { cardId: card.id, kind: 'attachment_added' }, actorSocketId(request));
+      return reply.code(201).send({
+        id: att.id, filename: att.filename, mimeType: att.mimeType,
+        sizeBytes: att.sizeBytes, createdAt: att.createdAt.toISOString(),
+        url: `/api/attachments/${att.id}`,
+      });
+    },
+  );
 
   // Download attachment (auth + visibility)
   app.get<{ Params: { id: string } }>('/attachments/:id', async (request, reply) => {

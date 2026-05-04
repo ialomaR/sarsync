@@ -187,6 +187,43 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
     }
   };
 
+  const renameChecklistItem = async (item, newText) => {
+    const t = newText.trim();
+    if (!t || t === item.text) return;
+    setState((s) => ({
+      ...s,
+      card: { ...s.card, checklist: s.card.checklist.map((k) => k.id === item.id ? { ...k, text: t } : k) },
+    }));
+    try {
+      await api(`/checklist/${item.id}`, { method: 'PATCH', body: { text: t } });
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        card: { ...s.card, checklist: s.card.checklist.map((k) => k.id === item.id ? { ...k, text: item.text } : k) },
+      }));
+      alert(err.message);
+    }
+  };
+
+  const deleteChecklistItem = async (item) => {
+    if (!confirm(rtl ? 'حذف هذه المهمة؟' : 'Delete this task?')) return;
+    const prev = state.card.checklist;
+    setState((s) => ({
+      ...s,
+      card: { ...s.card, checklist: s.card.checklist.filter((k) => k.id !== item.id) },
+    }));
+    try {
+      await api(`/checklist/${item.id}`, { method: 'DELETE' });
+      const list = prev.filter((k) => k.id !== item.id);
+      const total = list.length;
+      const done = list.filter((k) => k.done).length;
+      onCardChanged?.({ checklist: total > 0 ? { done, total } : null });
+    } catch (err) {
+      setState((s) => ({ ...s, card: { ...s.card, checklist: prev } }));
+      alert(err.message);
+    }
+  };
+
   const toggleMember = async (userId) => {
     const has = state.card.memberIds.includes(userId);
     setState((s) => ({
@@ -529,7 +566,12 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                     attachments={c.attachments}
                     coverAttachmentId={c.coverAttachmentId}
                     canEdit={canEdit}
+                    cardId={cardId}
+                    userDeptId={auth.user?.memberships?.find((mm) => mm.workspaceId === workspaceId)?.departmentId || null}
                     onUpload={canEdit ? uploadAttachment : null}
+                    onAttachedFromMedia={canEdit ? ((att) => {
+                      setState((s) => ({ ...s, card: { ...s.card, attachments: [...s.card.attachments, att] } }));
+                    }) : null}
                     onDelete={canEdit ? deleteAttachment : null}
                     onRename={canEdit ? renameAttachment : null}
                     onSetCover={canEdit ? setCover : null} />
@@ -537,7 +579,9 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                   {(c.checklist.length > 0 || canEdit) && (
                     <ChecklistSection theme={theme} rtl={rtl} items={c.checklist}
                       onToggle={canEdit ? toggleCheck : null}
-                      onAdd={canEdit ? addChecklistItem : null} />
+                      onAdd={canEdit ? addChecklistItem : null}
+                      onRename={canEdit ? renameChecklistItem : null}
+                      onDelete={canEdit ? deleteChecklistItem : null} />
                   )}
 
                   <Section icon="comment" title={rtl ? 'تعليقات' : 'Comments'} theme={theme}
@@ -684,7 +728,7 @@ function Section({ icon, title, trailing, theme, children }) {
   );
 }
 
-function ChecklistSection({ theme, rtl, items, onToggle, onAdd }) {
+function ChecklistSection({ theme, rtl, items, onToggle, onAdd, onRename, onDelete }) {
   const total = items.length;
   const done = items.filter((k) => k.done).length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -715,19 +759,8 @@ function ChecklistSection({ theme, rtl, items, onToggle, onAdd }) {
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {items.map((k) => (
-          <label key={k.id} style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '6px 8px', borderRadius: 5, cursor: onToggle ? 'pointer' : 'default',
-          }}>
-            <input type="checkbox" checked={k.done}
-              disabled={!onToggle}
-              onChange={() => onToggle && onToggle(k)}
-              style={{ accentColor: theme.accent, width: 14, height: 14 }} />
-            <span style={{
-              fontSize: 13, color: k.done ? theme.muted : theme.text,
-              textDecoration: k.done ? 'line-through' : 'none',
-            }}>{k.text}</span>
-          </label>
+          <ChecklistRow key={k.id} item={k} theme={theme} rtl={rtl}
+            onToggle={onToggle} onRename={onRename} onDelete={onDelete} />
         ))}
         {total === 0 && !adding && (
           <div style={{ fontSize: 12, color: theme.muted, padding: '4px 8px' }}>
@@ -774,6 +807,76 @@ function ChecklistSection({ theme, rtl, items, onToggle, onAdd }) {
         </button>
       ))}
     </Section>
+  );
+}
+
+function ChecklistRow({ item: k, theme, rtl, onToggle, onRename, onDelete }) {
+  const [editing, setEditing] = React.useState(false);
+  const [hover, setHover] = React.useState(false);
+  const [text, setText] = React.useState(k.text);
+  React.useEffect(() => { setText(k.text); }, [k.text]);
+
+  const saveRename = () => {
+    setEditing(false);
+    if (text.trim() && text.trim() !== k.text) onRename?.(k, text.trim());
+    else setText(k.text);
+  };
+
+  if (editing) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px' }}>
+        <input type="checkbox" checked={k.done} disabled
+          style={{ accentColor: theme.accent, width: 14, height: 14 }} />
+        <input autoFocus value={text} onChange={(e) => setText(e.target.value)}
+          onBlur={saveRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); saveRename(); }
+            if (e.key === 'Escape') { setText(k.text); setEditing(false); }
+          }}
+          style={{
+            flex: 1, padding: '4px 8px',
+            background: theme.bg, color: theme.text,
+            border: `1px solid ${theme.accent}`, borderRadius: 4,
+            fontSize: 13, fontFamily: 'inherit', outline: 'none',
+          }} />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '6px 8px', borderRadius: 5,
+      }}>
+      <input type="checkbox" checked={k.done}
+        disabled={!onToggle}
+        onChange={() => onToggle && onToggle(k)}
+        style={{ accentColor: theme.accent, width: 14, height: 14, cursor: onToggle ? 'pointer' : 'default' }} />
+      <span
+        onClick={() => onRename && setEditing(true)}
+        style={{
+          flex: 1, fontSize: 13, color: k.done ? theme.muted : theme.text,
+          textDecoration: k.done ? 'line-through' : 'none',
+          cursor: onRename ? 'text' : 'default',
+        }}>{k.text}</span>
+      {hover && onRename && (
+        <button onClick={() => setEditing(true)} title={rtl ? 'تعديل' : 'Edit'} style={{
+          padding: '3px 6px', borderRadius: 4,
+          background: 'transparent', border: 'none', color: theme.muted,
+          cursor: 'pointer', fontSize: 11, fontFamily: 'inherit',
+        }}>{rtl ? 'تعديل' : 'Edit'}</button>
+      )}
+      {hover && onDelete && (
+        <button onClick={() => onDelete(k)} title={rtl ? 'حذف' : 'Delete'} style={{
+          padding: '3px 6px', borderRadius: 4,
+          background: 'transparent', border: 'none', color: '#DC2626',
+          cursor: 'pointer', fontSize: 11, fontFamily: 'inherit',
+        }}>×</button>
+      )}
+    </div>
   );
 }
 
@@ -1154,23 +1257,54 @@ function iconMicroBtn(theme, color) {
   };
 }
 
-function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdit, onUpload, onDelete, onRename, onSetCover }) {
+function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdit, cardId, userDeptId, onUpload, onAttachedFromMedia, onDelete, onRename, onSetCover }) {
   const fileRef = React.useRef(null);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
   if (attachments.length === 0 && !canEdit) return null;
 
   const addBtn = canEdit && (
-    <>
+    <div style={{ position: 'relative' }}>
       <input ref={fileRef} type="file" hidden onChange={(e) => { onUpload(e.target.files?.[0]); e.target.value = ''; }} />
-      <button onClick={() => fileRef.current?.click()} style={{
+      <button onClick={() => setMenuOpen((o) => !o)} style={{
         background: theme.surface2, border: `.5px solid ${theme.border}`,
         color: theme.text, padding: '4px 10px', borderRadius: 5,
         fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
         display: 'inline-flex', alignItems: 'center', gap: 5,
       }}>
-        <Icon.paper size={12} />
-        {rtl ? 'رفع ملف' : 'Attach file'}
+        <Icon.plus size={12} />
+        {rtl ? 'إضافة' : 'Add'}
       </button>
-    </>
+      {menuOpen && (
+        <>
+          <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 70 }} />
+          <div style={{
+            position: 'absolute', top: '100%', insetInlineEnd: 0, marginTop: 4,
+            background: theme.surface, border: `.5px solid ${theme.border}`,
+            borderRadius: 6, boxShadow: '0 6px 24px rgba(0,0,0,.15)',
+            zIndex: 80, minWidth: 180, padding: 4,
+          }}>
+            <button onClick={() => { setMenuOpen(false); fileRef.current?.click(); }} style={menuItemStyle(theme)}>
+              <Icon.paper size={12} />
+              {rtl ? 'رفع ملف من الجهاز' : 'Upload from device'}
+            </button>
+            <button onClick={() => { setMenuOpen(false); setPickerOpen(true); }}
+              disabled={!userDeptId}
+              title={!userDeptId ? (rtl ? 'لا توجد مكتبة ميديا متاحة' : 'No media library available') : ''}
+              style={{ ...menuItemStyle(theme), opacity: userDeptId ? 1 : 0.5,
+                cursor: userDeptId ? 'pointer' : 'not-allowed' }}>
+              <Icon.folder size={12} />
+              {rtl ? 'اختيار من الميديا' : 'Pick from media'}
+            </button>
+          </div>
+        </>
+      )}
+      {pickerOpen && userDeptId && (
+        <MediaPicker theme={theme} rtl={rtl} departmentId={userDeptId} cardId={cardId}
+          onClose={() => setPickerOpen(false)}
+          onAttached={(att) => { setPickerOpen(false); onAttachedFromMedia?.(att); }} />
+      )}
+    </div>
   );
 
   if (attachments.length === 0) {
@@ -1198,6 +1332,132 @@ function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdi
           onSetCover={canEdit ? onSetCover : null} />
       ))}
     </Section>
+  );
+}
+
+function menuItemStyle(theme) {
+  return {
+    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+    padding: '7px 10px', borderRadius: 4,
+    background: 'transparent', border: 'none',
+    color: theme.text, fontSize: 12.5, fontWeight: 500,
+    cursor: 'pointer', fontFamily: 'inherit', textAlign: 'inherit',
+  };
+}
+
+function MediaPicker({ theme, rtl, departmentId, cardId, onClose, onAttached }) {
+  const [items, setItems] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [attaching, setAttaching] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api(`/departments/${departmentId}/media?limit=60`)
+      .then((d) => { if (!cancelled) setItems(d.items || []); })
+      .catch((e) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [departmentId]);
+
+  const attach = async (m) => {
+    if (attaching) return;
+    setAttaching(m.id);
+    try {
+      const att = await api(`/cards/${cardId}/attachments/from-media`, {
+        method: 'POST', body: { mediaId: m.id },
+      });
+      onAttached?.(att);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setAttaching(null);
+    }
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 90,
+      background: 'rgba(10,12,18,.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: theme.surface, color: theme.text,
+        borderRadius: 10, width: 720, maxWidth: '100%', maxHeight: '85vh',
+        display: 'flex', flexDirection: 'column',
+        border: theme.name === 'dark' ? `.5px solid ${theme.border}` : 'none',
+        boxShadow: '0 20px 60px rgba(0,0,0,.4)',
+      }}>
+        <div style={{
+          padding: '14px 18px', borderBottom: `.5px solid ${theme.border}`,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>
+            {rtl ? 'اختيار ملف من الميديا' : 'Pick from media'}
+          </h3>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: 'none', color: theme.muted,
+            fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: 4,
+          }}>×</button>
+        </div>
+        <div style={{ padding: 14, overflow: 'auto', flex: 1 }}>
+          {loading && <div style={{ padding: 24, textAlign: 'center', color: theme.muted }}>{rtl ? 'جاري التحميل…' : 'Loading…'}</div>}
+          {error && <div style={{ padding: 16, color: '#DC2626', fontSize: 13 }}>{error}</div>}
+          {items && items.length === 0 && (
+            <div style={{ padding: 32, textAlign: 'center', color: theme.muted, fontSize: 13 }}>
+              {rtl ? 'لا توجد ملفات في الميديا بعد.' : 'No media items yet.'}
+            </div>
+          )}
+          {items && items.length > 0 && (
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10,
+            }}>
+              {items.map((m) => (
+                <button key={m.id} onClick={() => attach(m)}
+                  disabled={attaching !== null && attaching !== m.id}
+                  style={{
+                    background: theme.surface2, border: `.5px solid ${theme.border}`,
+                    borderRadius: 7, padding: 0, overflow: 'hidden',
+                    cursor: 'pointer', fontFamily: 'inherit', color: 'inherit',
+                    display: 'flex', flexDirection: 'column',
+                    opacity: attaching && attaching !== m.id ? 0.5 : 1,
+                  }}>
+                  <div style={{
+                    height: 100, background: theme.bg,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 11, color: theme.mutedDim, overflow: 'hidden',
+                  }}>
+                    {m.isImage && m.thumbUrl ? (
+                      <img src={withToken(m.thumbUrl)} alt={m.title}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <span style={{ fontSize: 22, fontWeight: 700, color: theme.muted }}>
+                        {(m.filename.split('.').pop() || 'FILE').toUpperCase().slice(0, 4)}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ padding: '6px 8px', textAlign: rtl ? 'right' : 'left' }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, color: theme.text,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {m.title || m.filename}
+                    </div>
+                    <div style={{ fontSize: 10, color: theme.muted, marginTop: 2 }}>
+                      {(m.sizeBytes / 1024).toFixed(0)} KB
+                    </div>
+                  </div>
+                  {attaching === m.id && (
+                    <div style={{ padding: '4px 8px', fontSize: 10, color: theme.accent }}>
+                      {rtl ? 'جاري الإرفاق…' : 'Attaching…'}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
