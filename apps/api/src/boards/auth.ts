@@ -76,32 +76,43 @@ export function canViewBoard(
 // Content-level edit: lists, cards, members on cards, labels, checklists,
 // comments. Cross-dept assignees (BoardMember) get this — same level as a
 // regular member on the host board (Trello/Jira/Linear standard).
+//
+// Editability ALWAYS implies visibility — a user who can edit can also see
+// the board (canViewBoard). The reverse isn't true: guests view but can't
+// edit. The two rules are kept in sync so users never hit "I can see it but
+// can't change it" on workspace-wide content.
 export function canEditBoard(
   membership: { role: Role; departmentId: string | null; teamId: string | null; boardAccessIds?: Set<string> },
   board: { id?: string; departmentId: string | null; teamId: string | null },
 ): boolean {
   if (membership.role === Role.admin) return true;
   if (membership.role === Role.guest) return false;
-  if (membership.role === Role.dept_manager && board.departmentId === membership.departmentId) return true;
-  // team_lead and member can edit boards in their team
+  // Workspace-wide boards (no dept) are open to every non-guest member —
+  // matches the visibility rule. This covers cross-functional projects and
+  // any board created before/without a department being assigned.
+  if (!board.departmentId) return true;
+  // Dept-scoped: editable by anyone whose membership is in that dept.
+  if (membership.departmentId && membership.departmentId === board.departmentId) return true;
+  // Team-scoped: editable by team members.
   if (board.teamId && membership.teamId === board.teamId) return true;
-  // members can also edit boards in their dept (per the original matrix)
-  if (board.departmentId && membership.departmentId === board.departmentId) return true;
-  // Explicit per-board access also grants content edit (matches Trello/Linear)
+  // Explicit per-board access (cross-dept assignment, Trello/Linear style).
   if (board.id && membership.boardAccessIds?.has(board.id)) return true;
   return false;
 }
 
 // Board-level management: rename, archive, change dept/team assignment.
-// Reserved for users responsible for the board's home org (admin + the
-// owning dept's manager + the owning team's lead). Cross-dept assignees do
-// NOT inherit manage access — their seniority elsewhere doesn't carry over.
+// Reserved for users responsible for the board's home org. Cross-dept
+// assignees do NOT inherit manage access — their seniority elsewhere
+// doesn't carry over. Workspace-wide boards (no dept) are managed by
+// admins only.
 export function canManageBoard(
   membership: { role: Role; departmentId: string | null; teamId: string | null },
   board: { departmentId: string | null; teamId: string | null },
 ): boolean {
   if (membership.role === Role.admin) return true;
   if (membership.role === Role.guest) return false;
+  // Workspace-wide → admin only (already returned above)
+  if (!board.departmentId) return false;
   if (membership.role === Role.dept_manager && board.departmentId === membership.departmentId) return true;
   if (membership.role === Role.team_lead && board.teamId && membership.teamId === board.teamId) return true;
   return false;

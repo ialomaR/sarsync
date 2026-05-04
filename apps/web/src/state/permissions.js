@@ -25,25 +25,29 @@ export function canViewBoard(membership, board) {
 // Content-level edit (cards, lists, labels, members, etc). Cross-dept
 // assignees with a BoardMember grant get this — same as a regular board
 // member (Trello/Jira/Linear standard).
+//
+// Mirrors canEditBoard in apps/api/src/boards/auth.ts — keep them in sync.
+// Editability always implies visibility (see canViewBoard above).
 export function canEditBoard(membership, board) {
   if (!membership || !board) return false;
   if (membership.role === 'admin') return true;
   if (membership.role === 'guest') return false;
-  if (membership.role === 'dept_manager' && board.departmentId === membership.departmentId) return true;
+  // Workspace-wide → all non-guest members (matches visibility).
+  if (!board.departmentId) return true;
+  if (membership.departmentId && membership.departmentId === board.departmentId) return true;
   if (board.teamId && membership.teamId === board.teamId) return true;
-  if (board.departmentId && membership.departmentId === board.departmentId) return true;
-  // Explicit cross-dept grant — matches server behavior (BoardMember row).
   if (hasExplicitGrant(membership, board)) return true;
   return false;
 }
 
 // Board-level management (rename, archive, change dept/team). Reserved for
 // users responsible for the board's home org — their seniority elsewhere
-// doesn't carry over.
+// doesn't carry over. Workspace-wide boards: admin only.
 export function canManageBoard(membership, board) {
   if (!membership || !board) return false;
   if (membership.role === 'admin') return true;
   if (membership.role === 'guest') return false;
+  if (!board.departmentId) return false;  // workspace-wide → admin only
   if (membership.role === 'dept_manager' && board.departmentId === membership.departmentId) return true;
   if (membership.role === 'team_lead' && board.teamId && membership.teamId === board.teamId) return true;
   return false;

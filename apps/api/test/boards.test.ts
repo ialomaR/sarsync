@@ -141,6 +141,102 @@ describe('boards + permissions', () => {
     expect(archive.statusCode).toBe(403);
   });
 
+  it('dept_manager can add cards to a workspace-wide board (no dept)', async () => {
+    // Reproduces the bug: dept_manager invited without a department,
+    // creates a board (which auto-saves with departmentId=null), then
+    // tries to add a card. The fix lets workspace-wide boards be edited
+    // by every non-guest member.
+    const app = await getApp();
+    const admin = await signupUser(app);
+    const ws = admin.membership.workspaceId;
+    // Member with dept_manager role but NO department assigned — what
+    // happens when an admin invites someone without picking a dept.
+    const dm = await addMember(app, ws, { role: Role.dept_manager, departmentId: null });
+
+    const create = await app.inject({
+      method: 'POST',
+      url: `/workspaces/${ws}/boards`,
+      headers: authHeader(dm.accessToken),
+      payload: { title: 'Workspace-wide initiative' },
+    });
+    expect(create.statusCode).toBe(201);
+    const board = create.json();
+    expect(board.departmentId).toBeNull();
+
+    const detail = (await app.inject({
+      method: 'GET', url: `/boards/${board.id}`, headers: authHeader(dm.accessToken),
+    })).json();
+
+    // Add a card — this is what the user reported as broken.
+    const card = await app.inject({
+      method: 'POST',
+      url: `/lists/${detail.lists[0].id}/cards`,
+      headers: authHeader(dm.accessToken),
+      payload: { title: 'First card on a workspace board' },
+    });
+    expect(card.statusCode).toBe(201);
+
+    // Add a list too — also content-edit.
+    const list = await app.inject({
+      method: 'POST',
+      url: `/boards/${board.id}/lists`,
+      headers: authHeader(dm.accessToken),
+      payload: { title: 'Done' },
+    });
+    expect(list.statusCode).toBe(201);
+
+    // BUT — workspace-wide boards: only admin can rename/archive (manage).
+    const rename = await app.inject({
+      method: 'PATCH',
+      url: `/boards/${board.id}`,
+      headers: authHeader(dm.accessToken),
+      payload: { title: 'hijacked' },
+    });
+    expect(rename.statusCode).toBe(403);
+  });
+
+  it('member with no dept can edit workspace-wide boards but not dept boards', async () => {
+    const app = await getApp();
+    const admin = await signupUser(app);
+    const ws = admin.membership.workspaceId;
+    const dept = await prisma.department.create({ data: { workspaceId: ws, name: 'Design' } });
+    const orphan = await addMember(app, ws, { role: Role.member, departmentId: null });
+
+    // Admin makes a workspace-wide board — orphan can edit
+    const wsBoard = (await app.inject({
+      method: 'POST',
+      url: `/workspaces/${ws}/boards`,
+      headers: authHeader(admin.accessToken),
+      payload: { title: 'All hands' },
+    })).json();
+    const wsLists = (await app.inject({
+      method: 'GET', url: `/boards/${wsBoard.id}`, headers: authHeader(admin.accessToken),
+    })).json().lists;
+    const c1 = await app.inject({
+      method: 'POST', url: `/lists/${wsLists[0].id}/cards`,
+      headers: authHeader(orphan.accessToken),
+      payload: { title: 'Hi from no-dept' },
+    });
+    expect(c1.statusCode).toBe(201);
+
+    // Admin makes a dept board — orphan cannot edit
+    const deptBoard = (await app.inject({
+      method: 'POST',
+      url: `/workspaces/${ws}/boards`,
+      headers: authHeader(admin.accessToken),
+      payload: { title: 'Design only', departmentId: dept.id },
+    })).json();
+    const deptLists = (await app.inject({
+      method: 'GET', url: `/boards/${deptBoard.id}`, headers: authHeader(admin.accessToken),
+    })).json().lists;
+    const c2 = await app.inject({
+      method: 'POST', url: `/lists/${deptLists[0].id}/cards`,
+      headers: authHeader(orphan.accessToken),
+      payload: { title: 'Should fail' },
+    });
+    expect(c2.statusCode).toBe(403);
+  });
+
   it('completing a card increments the user KPIs', async () => {
     const { app, admin, dept } = await adminWithDept();
     const board = (await app.inject({
