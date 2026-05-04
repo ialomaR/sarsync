@@ -422,29 +422,6 @@ function WorkspaceDetailDrawer({ theme, rtl, workspaceId, onClose, onSuspend, on
               </div>
             </div>
 
-            <div style={{ padding: '0 24px 14px' }}>
-              <h3 style={{ fontSize: 12, fontWeight: 700, color: theme.muted, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-                {rtl ? 'آخر اللوحات' : 'Recent boards'}
-              </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {data.recentBoards.length === 0 && (
-                  <div style={{ fontSize: 12, color: theme.muted, padding: 8 }}>{rtl ? 'لا توجد لوحات' : 'No boards'}</div>
-                )}
-                {data.recentBoards.map((b) => (
-                  <div key={b.id} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '8px 10px', background: theme.surface, borderRadius: 6,
-                    border: `.5px solid ${theme.border}`, fontSize: 12.5,
-                  }}>
-                    <span style={{ color: theme.text, fontWeight: 500 }}>{b.title}</span>
-                    <span style={{ color: theme.mutedDim, fontSize: 10.5 }}>
-                      {b.listCount} {rtl ? 'عمود' : 'lists'} · {formatRelative(b.updatedAt)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div style={{ marginTop: 'auto', padding: '14px 24px',
               borderTop: `.5px solid ${theme.border}`,
               display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>

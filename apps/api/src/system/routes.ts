@@ -87,16 +87,9 @@ export async function systemRoutes(app: FastifyInstance) {
     if (!w) return reply.code(404).send({ error: 'not_found' });
 
     const since = new Date(Date.now() - 30 * 24 * 3600_000);
-    const [activeCards, completedCards, recentBoards] = await Promise.all([
+    const [activeCards, completedCards] = await Promise.all([
       prisma.card.count({ where: { list: { board: { workspaceId: w.id } }, archivedAt: null, completedAt: null } }),
       prisma.card.count({ where: { list: { board: { workspaceId: w.id } }, completedAt: { gte: since } } }),
-      prisma.board.findMany({
-        where: { workspaceId: w.id, archivedAt: null },
-        orderBy: { updatedAt: 'desc' },
-        take: 10,
-        select: { id: true, title: true, updatedAt: true, departmentId: true,
-          _count: { select: { lists: true } } },
-      }),
     ]);
 
     return reply.send({
@@ -122,12 +115,6 @@ export async function systemRoutes(app: FastifyInstance) {
         department: m.department ? (m.department.nameAr || m.department.name) : null,
         joinedAt: m.joinedAt.toISOString(),
         suspended: !!m.user.suspendedAt,
-      })),
-      recentBoards: recentBoards.map((b) => ({
-        id: b.id,
-        title: b.title,
-        listCount: b._count.lists,
-        updatedAt: b.updatedAt.toISOString(),
       })),
     });
   });

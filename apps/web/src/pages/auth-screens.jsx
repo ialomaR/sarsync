@@ -150,15 +150,8 @@ function AuthBrandPanel({ theme, themeName, rtl }) {
         <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-.02em' }}>SarSync</span>
       </div>
       <div style={{ position: 'relative' }}>
-        <div style={{ fontSize: 32, fontWeight: 600, letterSpacing: '-.025em', lineHeight: 1.2, marginBottom: 22, color: theme.text, textWrap: 'balance', maxWidth: 420 }}>
+        <div style={{ fontSize: 32, fontWeight: 600, letterSpacing: '-.025em', lineHeight: 1.2, color: theme.text, textWrap: 'balance', maxWidth: 420 }}>
           {rtl ? '"اختصرنا الاجتماعات إلى النصف. كل شيء على اللوحة."' : '"We cut our standups in half. Everything’s on the board."'}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 36, background: theme.accent, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13 }}>SA</div>
-          <div>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: theme.text }}>Sara Al-Mutairi</div>
-            <div style={{ fontSize: 11.5, color: theme.muted }}>Head of Design · Atlas Studio</div>
-          </div>
         </div>
       </div>
       <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: theme.muted }}>
