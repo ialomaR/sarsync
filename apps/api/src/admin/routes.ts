@@ -256,9 +256,14 @@ export async function adminRoutes(app: FastifyInstance) {
     ]);
 
     // ── Per-member rollups ────────────────────────────────────────────────
-    // groupBy on cardMember scoped to cards in this dept.
+    // Active/overdue stay on assignment (CardMember) because those represent
+    // current workload. Completed counts use a richer rule: a user is credited
+    // if they were either an assignee OR the person who marked the card
+    // complete. Without that OR, users who finish work they weren't formally
+    // assigned to (common for solo creators) end up scoring zero.
     type GB = Array<{ userId: string; _count: { _all: number } }>;
-    const [active, overdue, monthDone, allDone, last] = await Promise.all<GB | unknown>([
+    const userIdSet = new Set(userIds);
+    const [active, overdue, monthCompletedCards, allCompletedCards, last] = await Promise.all<GB | unknown>([
       prisma.cardMember.groupBy({
         by: ['userId'],
         where: { userId: { in: userIds }, card: { ...inDept, completedAt: null } },
@@ -269,15 +274,13 @@ export async function adminRoutes(app: FastifyInstance) {
         where: { userId: { in: userIds }, card: { ...inDept, completedAt: null, due: { lt: now } } },
         _count: { _all: true },
       }),
-      prisma.cardMember.groupBy({
-        by: ['userId'],
-        where: { userId: { in: userIds }, card: { ...inDept, completedAt: { gte: lastMonth } } },
-        _count: { _all: true },
+      prisma.card.findMany({
+        where: { ...inDept, completedAt: { gte: lastMonth } },
+        select: { id: true, completedById: true, members: { select: { userId: true } } },
       }),
-      prisma.cardMember.groupBy({
-        by: ['userId'],
-        where: { userId: { in: userIds }, card: { ...inDept, completedAt: { not: null } } },
-        _count: { _all: true },
+      prisma.card.findMany({
+        where: { ...inDept, completedAt: { not: null } },
+        select: { id: true, completedById: true, members: { select: { userId: true } } },
       }),
       // Last activity per user (across the whole workspace — easier and
       // more meaningful than scoping to dept)
@@ -293,10 +296,23 @@ export async function adminRoutes(app: FastifyInstance) {
       for (const r of rows as GB) m.set(r.userId, r._count._all);
       return m;
     };
+    type CompletedCardLite = { id: string; completedById: string | null; members: Array<{ userId: string }> };
+    const tallyCompleted = (rows: CompletedCardLite[]): Map<string, number> => {
+      const m = new Map<string, number>();
+      for (const c of rows) {
+        // Use a Set so a user counted as both assignee and completer gets a
+        // single credit per card.
+        const credited = new Set<string>();
+        for (const mem of c.members) if (userIdSet.has(mem.userId)) credited.add(mem.userId);
+        if (c.completedById && userIdSet.has(c.completedById)) credited.add(c.completedById);
+        for (const uid of credited) m.set(uid, (m.get(uid) ?? 0) + 1);
+      }
+      return m;
+    };
     const activeMap   = tally(active);
     const overdueMap  = tally(overdue);
-    const monthMap    = tally(monthDone);
-    const totalMap    = tally(allDone);
+    const monthMap    = tallyCompleted(monthCompletedCards as CompletedCardLite[]);
+    const totalMap    = tallyCompleted(allCompletedCards as CompletedCardLite[]);
     const lastMap     = new Map<string, string | null>();
     for (const r of last as Array<{ actorId: string; _max: { createdAt: Date | null } }>) {
       lastMap.set(r.actorId, r._max.createdAt ? r._max.createdAt.toISOString() : null);

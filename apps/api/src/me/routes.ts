@@ -59,10 +59,16 @@ export async function meRoutes(app: FastifyInstance) {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
     const dueToday = tasks.filter((t) => t.due && new Date(t.due) <= todayEnd && new Date(t.due).getTime() >= now).length;
+    // Credit a card to the user if they were either assigned to it or were
+    // the one who marked it complete. Without the OR, users who finish work
+    // they weren't formally assigned to (common for solo creators) score 0.
     const completedThisWeek = await prisma.card.count({
       where: {
-        members: { some: { userId } },
         completedAt: { gte: new Date(now - 7 * 24 * 3600_000) },
+        OR: [
+          { members: { some: { userId } } },
+          { completedById: userId },
+        ],
       },
     });
 

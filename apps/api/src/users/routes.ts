@@ -148,6 +148,10 @@ export async function userRoutes(app: FastifyInstance) {
     const userId = request.params.id;
     const wsScope = { list: { board: { workspaceId: scope.workspaceId, archivedAt: null } } } as const;
     const memberOf = { members: { some: { userId } } } as const;
+    // For "completed" KPIs, credit the user if they were either an assignee
+    // or the person who marked the card complete. Active/overdue stay on
+    // assignment because those represent workload, not achievement.
+    const completionCredit = { OR: [memberOf, { completedById: userId }] };
 
     const now = new Date();
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - 7); // last 7 days rolling
@@ -159,13 +163,13 @@ export async function userRoutes(app: FastifyInstance) {
     ] = await Promise.all([
       prisma.card.count({ where: { archivedAt: null, completedAt: null, ...wsScope, ...memberOf } }),
       prisma.card.count({ where: { archivedAt: null, completedAt: null, due: { lt: now }, ...wsScope, ...memberOf } }),
-      prisma.card.count({ where: { archivedAt: null, completedAt: { gte: startOfWeek }, ...wsScope, ...memberOf } }),
-      prisma.card.count({ where: { archivedAt: null, completedAt: { gte: startOfMonth }, ...wsScope, ...memberOf } }),
+      prisma.card.count({ where: { archivedAt: null, completedAt: { gte: startOfWeek }, ...wsScope, ...completionCredit } }),
+      prisma.card.count({ where: { archivedAt: null, completedAt: { gte: startOfMonth }, ...wsScope, ...completionCredit } }),
       prisma.card.count({ where: { archivedAt: null, createdById: userId, createdAt: { gte: startOfMonth }, ...wsScope } }),
       prisma.comment.count({ where: { authorId: userId, createdAt: { gte: startOfMonth }, card: wsScope } }),
       // last 50 completed cards by this user — for avg cycle time
       prisma.card.findMany({
-        where: { archivedAt: null, completedAt: { not: null }, ...wsScope, ...memberOf },
+        where: { archivedAt: null, completedAt: { not: null }, ...wsScope, ...completionCredit },
         select: { createdAt: true, completedAt: true },
         orderBy: { completedAt: 'desc' },
         take: 50,
