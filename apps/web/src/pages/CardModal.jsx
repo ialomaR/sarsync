@@ -447,7 +447,7 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
     }}>
       <div onClick={(e) => e.stopPropagation()} className="card-modal-card" style={{
         background: theme.surface, color: theme.text,
-        borderRadius: 12, width: 720, maxWidth: '100%',
+        borderRadius: 12, width: 840, maxWidth: '100%',
         boxShadow: '0 20px 80px rgba(0,0,0,.4)',
         overflow: 'hidden',
         border: theme.name === 'dark' ? `.5px solid ${theme.border}` : 'none',
@@ -469,16 +469,17 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
             )}
             <div style={{ padding: '20px 24px 24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: theme.muted, fontSize: 12, marginBottom: 6 }}>
                     <Icon.board size={12} /> {rtl ? 'في قائمة' : 'in list'} <strong style={{ color: theme.text }}>{c.listTitle || listTitle}</strong>
                   </div>
                   <h2 style={{
                     margin: 0, fontSize: 19, fontWeight: 700,
                     color: theme.text, letterSpacing: '-.015em', textWrap: 'balance',
+                    overflowWrap: 'anywhere',
                   }}>{c.title}</h2>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                   {canEdit && (
                     <CompleteButton theme={theme} rtl={rtl} card={c} cardId={cardId}
                       onChange={(completedAt) => setState((s) => ({ ...s, card: { ...s.card, completedAt } }))} />
@@ -522,8 +523,8 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                 </MetaBlock>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px', gap: 28, marginTop: 24 }}>
-                <div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 180px', gap: 28, marginTop: 24 }}>
+                <div style={{ minWidth: 0 }}>
                   <Section icon="paper" title={rtl ? 'الوصف' : 'Description'} theme={theme}
                     trailing={canEdit && !editingDesc && (
                       <button onClick={() => { setDesc(c.description || ''); setEditingDesc(true); }} style={{
