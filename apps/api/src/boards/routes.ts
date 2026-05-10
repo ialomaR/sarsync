@@ -579,13 +579,17 @@ export async function boardsRoutes(app: FastifyInstance) {
       if (!d || d.workspaceId !== m.workspaceId) {
         return reply.code(400).send({ error: 'invalid_dept', message: 'Department not in workspace' });
       }
-      // dept_manager can only create in their dept
-      if (m.role === Role.dept_manager && parsed.data.departmentId !== m.departmentId) {
+      // dept_manager / team_lead can only create in their dept
+      if ((m.role === Role.dept_manager || m.role === Role.team_lead) && parsed.data.departmentId !== m.departmentId) {
         return reply.code(403).send({ error: 'forbidden', message: 'Cannot create boards in other departments' });
       }
-    } else if (m.role === Role.dept_manager) {
-      // dept_manager must scope to their department
+    } else if (m.role === Role.dept_manager || m.role === Role.team_lead) {
+      // Non-admins must scope to their own department; admin may leave it null (workspace-wide).
       parsed.data.departmentId = m.departmentId;
+      // team_lead also scopes to their team by default so boards land where teammates can see them.
+      if (m.role === Role.team_lead && !parsed.data.teamId && m.teamId) {
+        parsed.data.teamId = m.teamId;
+      }
     }
 
     if (parsed.data.teamId) {
