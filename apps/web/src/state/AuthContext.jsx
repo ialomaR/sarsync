@@ -45,6 +45,11 @@ export function AuthProvider({ children }) {
 
   const signIn = React.useCallback(async (email, password) => {
     const data = await apiSignIn(email, password);
+    // 2FA-protected accounts return only a short-lived challenge token —
+    // no access/refresh tokens, no user, no memberships. Leaving auth state
+    // as 'guest' until the OTP is verified avoids putting the app in a
+    // half-authed state where /auth/2fa can render unpredictably.
+    if (data.requires2FA) return data;
     setState({
       status: 'authed', user: data.user, memberships: data.memberships,
       activeWorkspaceId: pickActive(data.memberships),
