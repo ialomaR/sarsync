@@ -188,31 +188,149 @@ export function Sidebar({ theme, rtl }) {
             fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
             color: theme.mutedDim, padding: '14px 10px 6px', textTransform: 'uppercase',
           }}>{rtl ? 'لوحاتك' : 'Your boards'}</div>
-          {boards.slice(0, 5).map((b) => {
-            const active = currentBoardId === b.id;
-            return (
-              <button key={b.id} onClick={() => navigate('/b/' + b.id)} style={{
-                display: 'flex', alignItems: 'center', gap: 9,
-                background: active ? theme.accentSoft : 'transparent',
-                color: active ? theme.accent : theme.text,
-                border: 'none', padding: '7px 10px', borderRadius: 6,
-                fontSize: 12.5, fontWeight: active ? 600 : 500,
-                cursor: 'pointer', textAlign: rtl ? 'right' : 'left',
-                fontFamily: 'inherit',
-              }}>
-                <span style={{
-                  width: 16, height: 16, borderRadius: 4,
-                  background: `oklch(0.65 0.13 ${b.hue})`, flexShrink: 0,
-                }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {b.title}
-                </span>
-              </button>
-            );
-          })}
+          <BoardGroups
+            boards={boards} currentBoardId={currentBoardId}
+            theme={theme} rtl={rtl} navigate={navigate}
+          />
         </>
       )}
     </div>
+  );
+}
+
+// Boards grouped under collapsible department headers. Keeps the sidebar
+// compact when a workspace accumulates many boards. Expanded state persists
+// in localStorage so a user's preferred layout survives reloads.
+function BoardGroups({ boards, currentBoardId, theme, rtl, navigate }) {
+  const groups = React.useMemo(() => {
+    const byDept = new Map();
+    for (const b of boards) {
+      const key = b.departmentId || '__general__';
+      if (!byDept.has(key)) {
+        byDept.set(key, {
+          id: key,
+          name: b.departmentName,
+          nameAr: b.departmentNameAr,
+          hue: b.departmentHue,
+          boards: [],
+        });
+      }
+      byDept.get(key).boards.push(b);
+    }
+    const arr = [...byDept.values()];
+    // General group last; otherwise alphabetical by display name
+    arr.sort((a, b) => {
+      if (a.id === '__general__') return 1;
+      if (b.id === '__general__') return -1;
+      return localizedName(a, rtl).localeCompare(localizedName(b, rtl));
+    });
+    return arr;
+  }, [boards, rtl]);
+
+  // Restore expanded set from localStorage; auto-expand the dept that owns the
+  // currently-open board so the user can see siblings without a click.
+  const [expanded, setExpanded] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem('sarsync:sidebar:expandedDepts');
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+
+  const activeDeptId = React.useMemo(() => {
+    if (!currentBoardId) return null;
+    const b = boards.find((x) => x.id === currentBoardId);
+    return b ? (b.departmentId || '__general__') : null;
+  }, [boards, currentBoardId]);
+
+  React.useEffect(() => {
+    if (activeDeptId && !expanded.has(activeDeptId)) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.add(activeDeptId);
+        return next;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDeptId]);
+
+  const toggle = (id) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      try { localStorage.setItem('sarsync:sidebar:expandedDepts', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+
+  return (
+    <>
+      {groups.map((g) => {
+        const isOpen = expanded.has(g.id);
+        const label = g.id === '__general__'
+          ? (rtl ? 'عام' : 'General')
+          : localizedName(g, rtl);
+        const swatch = g.id === '__general__'
+          ? { background: theme.border, color: theme.muted }
+          : { background: `oklch(.78 .12 ${g.hue})`, color: `oklch(.32 .14 ${g.hue})` };
+        const Chevron = Icon.chevron;
+        return (
+          <React.Fragment key={g.id}>
+            <button onClick={() => toggle(g.id)} style={{
+              display: 'flex', alignItems: 'center', gap: 9,
+              background: 'transparent', color: theme.text,
+              border: 'none', padding: '7px 10px', borderRadius: 6,
+              fontSize: 12.5, fontWeight: 600,
+              cursor: 'pointer', textAlign: rtl ? 'right' : 'left',
+              fontFamily: 'inherit',
+            }}>
+              <span style={{
+                width: 16, height: 16, borderRadius: 4,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, fontWeight: 700, flexShrink: 0,
+                ...swatch,
+              }}>{(label?.[0] || '·').toUpperCase()}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {label}
+              </span>
+              <span style={{ color: theme.muted, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+                {g.boards.length}
+              </span>
+              <span style={{
+                color: theme.muted, display: 'inline-flex',
+                transform: rtl ? 'scaleX(-1)' : 'none',
+              }}>
+                <Chevron size={12} open={isOpen} />
+              </span>
+            </button>
+            {isOpen && g.boards.map((b) => {
+              const active = currentBoardId === b.id;
+              return (
+                <button key={b.id} onClick={() => navigate('/b/' + b.id)} style={{
+                  display: 'flex', alignItems: 'center', gap: 9,
+                  background: active ? theme.accentSoft : 'transparent',
+                  color: active ? theme.accent : theme.text,
+                  border: 'none',
+                  padding: '6px 10px',
+                  paddingInlineStart: 26,
+                  borderRadius: 6,
+                  fontSize: 12.5, fontWeight: active ? 600 : 500,
+                  cursor: 'pointer', textAlign: rtl ? 'right' : 'left',
+                  fontFamily: 'inherit',
+                }}>
+                  <span style={{
+                    width: 12, height: 12, borderRadius: 3,
+                    background: `oklch(0.65 0.13 ${b.hue})`, flexShrink: 0,
+                  }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {b.title}
+                  </span>
+                </button>
+              );
+            })}
+          </React.Fragment>
+        );
+      })}
+    </>
   );
 }
 

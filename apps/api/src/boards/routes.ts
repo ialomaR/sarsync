@@ -86,6 +86,7 @@ export async function boardsRoutes(app: FastifyInstance) {
       orderBy: { updatedAt: 'desc' },
       include: {
         _count: { select: { lists: true } },
+        department: { select: { id: true, name: true, nameAr: true, hue: true } },
       },
     });
 
@@ -135,6 +136,9 @@ export async function boardsRoutes(app: FastifyInstance) {
         cardCount: cardsByBoard.get(b.id) ?? 0,
         updatedAt: b.updatedAt.toISOString(),
         departmentId: b.departmentId,
+        departmentName: b.department?.name ?? null,
+        departmentNameAr: b.department?.nameAr ?? null,
+        departmentHue: b.department?.hue ?? null,
         teamId: b.teamId,
       })),
     });
