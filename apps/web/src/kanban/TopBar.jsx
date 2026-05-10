@@ -220,6 +220,19 @@ export function TopBar({ theme, board, rtl, onOpenSettings, onOpenSearch, showMe
               <div style={{ fontSize: 13, fontWeight: 600 }}>{u?.firstName} {u?.lastName}</div>
               <div style={{ fontSize: 11.5, color: theme.muted }}>{u?.email}</div>
             </div>
+            {u?.id && (
+              <button onClick={() => { setMenuOpen(false); navigate(`/u/${u.id}`); }} style={{
+                width: '100%', padding: '8px 10px', borderRadius: 5,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: 500, color: theme.text,
+                textAlign: rtl ? 'right' : 'left',
+                fontFamily: 'inherit',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = theme.surface2}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                {rtl ? 'ملفي الشخصي' : 'My profile'}
+              </button>
+            )}
             <button onClick={onSignOut} style={{
               width: '100%', padding: '8px 10px', borderRadius: 5,
               background: 'transparent', border: 'none', cursor: 'pointer',
