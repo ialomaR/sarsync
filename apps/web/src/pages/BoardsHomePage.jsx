@@ -5,9 +5,18 @@ import { useSettings } from '../state/SettingsContext.jsx';
 import { useAuth } from '../state/AuthContext.jsx';
 import { buildTheme } from '../ui/theme.js';
 import { Icon } from '../ui/Icon.jsx';
-import { api } from '../lib/api.js';
+import { api, getAccessToken } from '../lib/api.js';
 import { normalizeBoardSummary } from '../lib/normalize.js';
 import { activeMembership, canCreateBoard } from '../state/permissions.js';
+
+// Append access token so <img> requests can authenticate without an
+// Authorization header (browsers don't send custom headers on image loads).
+function withToken(url) {
+  if (!url) return url;
+  const t = getAccessToken();
+  if (!t) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t);
+}
 
 export function BoardsHomePage() {
   return (
@@ -340,9 +349,12 @@ function BoardCard({ board, theme, rtl, onOpen }) {
         border: theme.name === 'dark' ? `.5px solid ${theme.border}` : 'none',
       }}>
       <div style={{
-        height: 56, background: grad, position: 'relative',
+        height: 56, position: 'relative',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
         padding: 8,
+        background: board.coverUrl
+          ? `url(${withToken(board.coverUrl)}) center/cover, ${grad}`
+          : grad,
       }}>
         {board.team && (
           <span style={{

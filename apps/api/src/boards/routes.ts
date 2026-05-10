@@ -140,6 +140,7 @@ export async function boardsRoutes(app: FastifyInstance) {
         departmentNameAr: b.department?.nameAr ?? null,
         departmentHue: b.department?.hue ?? null,
         teamId: b.teamId,
+        coverUrl: b.coverImagePath ? `/api/boards/${b.id}/cover` : null,
       })),
     });
   });

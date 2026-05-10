@@ -58,6 +58,8 @@ export function BoardPage() {
               onToggleStar={board.toggleStar}
               onArchiveBoard={canManage ? board.archiveBoard : null}
               onDeleteBoard={canDelete ? board.deleteBoard : null}
+              onUploadCover={canManage ? board.uploadCover : null}
+              onRemoveCover={canManage ? board.removeCover : null}
               onAddCardToFirstList={canEdit && board.lists[0] ? () => {
                 const title = window.prompt(s.rtl ? 'عنوان البطاقة' : 'Card title');
                 if (title?.trim()) board.addCard(board.lists[0].id, title.trim());

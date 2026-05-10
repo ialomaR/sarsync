@@ -7,16 +7,34 @@ import { useBoardData } from '../state/BoardDataContext.jsx';
 import { iconBtn, pillBtn } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
 
-export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onDeleteBoard, canDelete, onAddCardToFirstList }) {
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onDeleteBoard, canDelete, onAddCardToFirstList, onUploadCover, onRemoveCover }) {
   const ctx = useBoardData();
   const navigate = useNavigate();
   const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
   const moreRef = React.useRef(null);
+  const coverInputRef = React.useRef(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [renaming, setRenaming] = React.useState(false);
   const [name, setName] = React.useState(board.title);
+  const [uploadingCover, setUploadingCover] = React.useState(false);
 
   React.useEffect(() => { setName(board.title); }, [board.title]);
+
+  const handleCoverFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onUploadCover) return;
+    setUploadingCover(true);
+    try { await onUploadCover(file); }
+    catch (err) { alert(err.message || 'Failed to upload cover'); }
+    finally { setUploadingCover(false); }
+  };
+  const handleRemoveCover = async () => {
+    if (!onRemoveCover) return;
+    if (!confirm(rtl ? 'إزالة غلاف اللوحة؟' : 'Remove board cover?')) return;
+    try { await onRemoveCover(); }
+    catch (err) { alert(err.message || 'Failed to remove cover'); }
+  };
 
   const onStar = async () => {
     try { await onToggleStar?.(); } catch (err) { alert(err.message); }
@@ -106,10 +124,25 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
             <Icon.plus /> {rtl ? 'بطاقة جديدة' : 'New card'}
           </button>
         )}
-        <Popover anchorRef={moreRef} open={menuOpen} onClose={() => setMenuOpen(false)} theme={theme} width={200} align="end">
+        <input ref={coverInputRef} type="file" accept="image/*" hidden onChange={handleCoverFile} />
+        <Popover anchorRef={moreRef} open={menuOpen} onClose={() => setMenuOpen(false)} theme={theme} width={210} align="end">
           {canManage && (
             <MenuItem theme={theme} onClick={() => { setMenuOpen(false); setRenaming(true); }}>
               {rtl ? 'تعديل الاسم' : 'Rename board'}
+            </MenuItem>
+          )}
+          {canManage && onUploadCover && (
+            <MenuItem theme={theme} onClick={() => { setMenuOpen(false); coverInputRef.current?.click(); }}>
+              {uploadingCover
+                ? (rtl ? 'جاري الرفع…' : 'Uploading…')
+                : (board.coverUrl
+                    ? (rtl ? 'تغيير الغلاف' : 'Change cover')
+                    : (rtl ? 'إضافة غلاف' : 'Add cover'))}
+            </MenuItem>
+          )}
+          {canManage && onRemoveCover && board.coverUrl && (
+            <MenuItem theme={theme} onClick={() => { setMenuOpen(false); handleRemoveCover(); }}>
+              {rtl ? 'إزالة الغلاف' : 'Remove cover'}
             </MenuItem>
           )}
           {canManage && (

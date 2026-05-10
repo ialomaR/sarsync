@@ -1,5 +1,5 @@
 import React from 'react';
-import { api } from '../lib/api.js';
+import { api, getAccessToken } from '../lib/api.js';
 import { normalizeBoard, normalizeCard, normalizeList, formatDueDate } from '../lib/normalize.js';
 import { subscribeSocket, emit } from '../lib/socket.js';
 
@@ -329,6 +329,31 @@ export function useBoardApi(boardId) {
     await api(`/boards/${state.board.id}`, { method: 'DELETE' });
   }, [state.board]);
 
+  const uploadCover = React.useCallback(async (file) => {
+    if (!state.board || !file) return;
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`/api/boards/${state.board.id}/cover`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getAccessToken()}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to upload cover');
+    }
+    const data = await res.json();
+    // Bust the URL with a cachebuster so <img> reloads instead of using stale bytes
+    const bustedUrl = data.coverUrl ? `${data.coverUrl}?v=${Date.now()}` : null;
+    setState((s) => ({ ...s, board: { ...s.board, coverUrl: bustedUrl } }));
+  }, [state.board]);
+
+  const removeCover = React.useCallback(async () => {
+    if (!state.board) return;
+    await api(`/boards/${state.board.id}/cover`, { method: 'DELETE' });
+    setState((s) => ({ ...s, board: { ...s.board, coverUrl: null } }));
+  }, [state.board]);
+
   return {
     status: state.status,
     error: state.error,
@@ -339,5 +364,6 @@ export function useBoardApi(boardId) {
     moveCard, addCard, addList, findCard, patchLocalCard, refetch,
     renameList, deleteList,
     updateBoard, archiveBoard, deleteBoard, toggleStar,
+    uploadCover, removeCover,
   };
 }

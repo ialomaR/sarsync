@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { verifyAccessToken } from '../auth/tokens.js';
-import { loadMembership, canViewBoard, canEditBoard } from './auth.js';
+import { loadMembership, canViewBoard, canEditBoard, canManageBoard } from './auth.js';
 import { logActivity } from './activity.js';
 import { emitBoardEvent, actorSocketId } from '../realtime.js';
 import { optimizeImageBuffer } from '../lib/optimize.js';
@@ -232,5 +232,107 @@ export async function attachmentRoutes(app: FastifyInstance) {
     await deleteObject(att.s3Key);
     emitBoardEvent(att.card.list.boardId, 'card:detail_changed', { cardId: att.cardId, kind: 'attachment_removed' }, actorSocketId(request));
     return reply.code(204).send();
+  });
+
+  // ── Board cover image ──────────────────────────────────────────────────
+  // Stored inline on Board (path + mime) rather than via the Attachment
+  // table since boards don't otherwise carry attachments. Only managers
+  // can upload/remove; any member who can view the board can fetch it.
+
+  app.post<{ Params: { id: string } }>('/boards/:id/cover', async (request, reply) => {
+    const board = await prisma.board.findUnique({ where: { id: request.params.id } });
+    if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
+    await loadMembership(request, reply, board.workspaceId);
+    if (reply.sent) return;
+    if (!canManageBoard(request.membership!, board)) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can change the cover' });
+    }
+
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ error: 'no_file', message: 'No file uploaded' });
+    if (!file.mimetype?.startsWith('image/')) {
+      return reply.code(415).send({ error: 'not_image', message: 'Cover must be an image' });
+    }
+
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of file.file) {
+      total += chunk.length;
+      if (total > MAX_BYTES) return reply.code(413).send({ error: 'too_large', message: 'Cover exceeds 50 MB' });
+      chunks.push(chunk);
+    }
+    if (file.file.truncated) return reply.code(413).send({ error: 'too_large', message: 'Cover exceeds 50 MB' });
+    let buffer: Buffer = Buffer.concat(chunks) as Buffer;
+
+    let storedMime = file.mimetype;
+    let storedExt = path.extname(file.filename || '').slice(0, 8) || '.img';
+    try {
+      const opt = await optimizeImageBuffer(buffer, storedMime);
+      if (opt) {
+        buffer = opt.buffer;
+        storedMime = opt.mimeType;
+        storedExt = '.webp';
+      }
+    } catch (err) {
+      request.log.warn({ err }, 'cover optimization failed, keeping original');
+    }
+
+    const newKey = `boards/${board.id}/cover-${crypto.randomBytes(8).toString('hex')}${storedExt}`;
+    await putObject(newKey, buffer, storedMime);
+
+    const previous = board.coverImagePath;
+    const updated = await prisma.board.update({
+      where: { id: board.id },
+      data: { coverImagePath: newKey, coverImageMime: storedMime },
+    });
+    if (previous) {
+      try { await deleteObject(previous); } catch (err) {
+        request.log.warn({ err }, 'failed to delete previous board cover');
+      }
+    }
+
+    emitBoardEvent(board.id, 'board:cover_changed', { boardId: board.id, hasCover: true }, actorSocketId(request));
+    return reply.send({
+      id: updated.id,
+      coverUrl: `/api/boards/${updated.id}/cover`,
+    });
+  });
+
+  app.delete<{ Params: { id: string } }>('/boards/:id/cover', async (request, reply) => {
+    const board = await prisma.board.findUnique({ where: { id: request.params.id } });
+    if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
+    await loadMembership(request, reply, board.workspaceId);
+    if (reply.sent) return;
+    if (!canManageBoard(request.membership!, board)) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can change the cover' });
+    }
+    if (!board.coverImagePath) return reply.code(204).send();
+
+    const previous = board.coverImagePath;
+    await prisma.board.update({
+      where: { id: board.id },
+      data: { coverImagePath: null, coverImageMime: null },
+    });
+    try { await deleteObject(previous); } catch (err) {
+      request.log.warn({ err }, 'failed to delete board cover from storage');
+    }
+    emitBoardEvent(board.id, 'board:cover_changed', { boardId: board.id, hasCover: false }, actorSocketId(request));
+    return reply.code(204).send();
+  });
+
+  app.get<{ Params: { id: string } }>('/boards/:id/cover', async (request, reply) => {
+    const board = await prisma.board.findUnique({ where: { id: request.params.id } });
+    if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
+    if (!board.coverImagePath) return reply.code(404).send({ error: 'no_cover', message: 'Board has no cover image' });
+    await loadMembership(request, reply, board.workspaceId);
+    if (reply.sent) return;
+    if (!canViewBoard(request.membership!, board)) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
+
+    const buffer = await getObjectBuffer(board.coverImagePath);
+    if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'Cover no longer in storage' });
+    return reply
+      .header('content-type', board.coverImageMime || 'application/octet-stream')
+      .header('cache-control', 'private, max-age=300')
+      .send(buffer);
   });
 }
