@@ -62,7 +62,7 @@ export async function meRoutes(app: FastifyInstance) {
     const completedThisWeek = await prisma.card.count({
       where: {
         members: { some: { userId } },
-        archivedAt: { not: null, gt: new Date(now - 7 * 24 * 3600_000) },
+        completedAt: { gte: new Date(now - 7 * 24 * 3600_000) },
       },
     });
 
