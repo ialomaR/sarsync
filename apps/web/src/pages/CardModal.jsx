@@ -1259,14 +1259,29 @@ function iconMicroBtn(theme, color) {
 }
 
 function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdit, cardId, userDeptId, onUpload, onAttachedFromMedia, onDelete, onRename, onSetCover }) {
+  // Multiple inputs (rather than one with dynamic accept/capture) so each
+  // mode triggers the native picker reliably without state-timing issues.
+  const imageRef = React.useRef(null);
+  const videoRef = React.useRef(null);
+  const cameraRef = React.useRef(null);
   const fileRef = React.useRef(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  // Selected attachment for the lightbox preview (image/video). null = closed.
+  const [previewing, setPreviewing] = React.useState(null);
+
+  const openPreview = (att) => setPreviewing(att);
+
   if (attachments.length === 0 && !canEdit) return null;
+
+  const handleFile = (e) => { onUpload(e.target.files?.[0]); e.target.value = ''; };
 
   const addBtn = canEdit && (
     <div style={{ position: 'relative' }}>
-      <input ref={fileRef} type="file" hidden onChange={(e) => { onUpload(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={imageRef}  type="file" accept="image/*"                        hidden onChange={handleFile} />
+      <input ref={videoRef}  type="file" accept="video/*"                        hidden onChange={handleFile} />
+      <input ref={cameraRef} type="file" accept="image/*,video/*" capture="environment" hidden onChange={handleFile} />
+      <input ref={fileRef}   type="file"                                         hidden onChange={handleFile} />
       <button onClick={() => setMenuOpen((o) => !o)} style={{
         background: theme.surface2, border: `.5px solid ${theme.border}`,
         color: theme.text, padding: '4px 10px', borderRadius: 5,
@@ -1283,11 +1298,23 @@ function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdi
             position: 'absolute', top: '100%', insetInlineEnd: 0, marginTop: 4,
             background: theme.surface, border: `.5px solid ${theme.border}`,
             borderRadius: 6, boxShadow: '0 6px 24px rgba(0,0,0,.15)',
-            zIndex: 80, minWidth: 180, padding: 4,
+            zIndex: 80, minWidth: 200, padding: 4,
           }}>
+            <button onClick={() => { setMenuOpen(false); imageRef.current?.click(); }} style={menuItemStyle(theme)}>
+              <Icon.paper size={12} />
+              {rtl ? 'صورة' : 'Photo'}
+            </button>
+            <button onClick={() => { setMenuOpen(false); videoRef.current?.click(); }} style={menuItemStyle(theme)}>
+              <Icon.paper size={12} />
+              {rtl ? 'فيديو' : 'Video'}
+            </button>
+            <button onClick={() => { setMenuOpen(false); cameraRef.current?.click(); }} style={menuItemStyle(theme)}>
+              <Icon.paper size={12} />
+              {rtl ? 'الكاميرا' : 'Camera'}
+            </button>
             <button onClick={() => { setMenuOpen(false); fileRef.current?.click(); }} style={menuItemStyle(theme)}>
               <Icon.paper size={12} />
-              {rtl ? 'رفع ملف من الجهاز' : 'Upload from device'}
+              {rtl ? 'ملف من الجهاز' : 'File from device'}
             </button>
             <button onClick={() => { setMenuOpen(false); setPickerOpen(true); }}
               disabled={!userDeptId}
@@ -1295,7 +1322,7 @@ function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdi
               style={{ ...menuItemStyle(theme), opacity: userDeptId ? 1 : 0.5,
                 cursor: userDeptId ? 'pointer' : 'not-allowed' }}>
               <Icon.folder size={12} />
-              {rtl ? 'اختيار من الميديا' : 'Pick from media'}
+              {rtl ? 'من الميديا' : 'Pick from media'}
             </button>
           </div>
         </>
@@ -1306,6 +1333,10 @@ function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdi
           onAttached={(att) => { setPickerOpen(false); onAttachedFromMedia?.(att); }} />
       )}
     </div>
+  );
+
+  const lightbox = previewing && (
+    <AttachmentLightbox theme={theme} rtl={rtl} attachment={previewing} onClose={() => setPreviewing(null)} />
   );
 
   if (attachments.length === 0) {
@@ -1320,6 +1351,7 @@ function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdi
           <Icon.paper size={18} />
           {rtl ? 'لا توجد مرفقات بعد — انقر للرفع' : 'No attachments yet — click to upload'}
         </div>
+        {lightbox}
       </Section>
     );
   }
@@ -1328,10 +1360,12 @@ function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdi
       {attachments.map((a) => (
         <AttachmentRow key={a.id} attachment={a} theme={theme} rtl={rtl}
           isCover={a.id === coverAttachmentId}
+          onPreview={openPreview}
           onDelete={canEdit ? onDelete : null}
           onRename={canEdit ? onRename : null}
           onSetCover={canEdit ? onSetCover : null} />
       ))}
+      {lightbox}
     </Section>
   );
 }
@@ -1462,8 +1496,10 @@ function MediaPicker({ theme, rtl, departmentId, cardId, onClose, onAttached }) 
   );
 }
 
-function AttachmentRow({ attachment: a, theme, rtl, isCover, onDelete, onRename, onSetCover }) {
+function AttachmentRow({ attachment: a, theme, rtl, isCover, onPreview, onDelete, onRename, onSetCover }) {
   const isImage = a.mimeType?.startsWith('image/');
+  const isVideo = a.mimeType?.startsWith('video/');
+  const isMedia = isImage || isVideo;
   const ext = (a.filename.split('.').pop() || '').toUpperCase().slice(0, 4);
   const sizeKB = (a.sizeBytes / 1024).toFixed(a.sizeBytes < 100_000 ? 1 : 0);
   const sizeMB = (a.sizeBytes / 1024 / 1024).toFixed(2);
@@ -1477,18 +1513,24 @@ function AttachmentRow({ attachment: a, theme, rtl, isCover, onDelete, onRename,
     onRename?.(a.id, t);
     setRenaming(false);
   };
+  const openMedia = (e) => { e.preventDefault(); onPreview?.(a); };
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10, padding: 8,
       background: theme.surface2, border: `.5px solid ${theme.border}`,
       borderRadius: 6, marginBottom: 6,
     }}>
-      <div style={{
+      <div onClick={isMedia ? openMedia : undefined} style={{
+        position: 'relative',
         width: 44, height: 36, borderRadius: 4, flexShrink: 0,
-        background: isImage ? `url(${withToken(a.url)}) center/cover` : '#3B82F6',
+        background: isImage ? `url(${withToken(a.url)}) center/cover` : (isVideo ? '#111827' : '#3B82F6'),
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         color: '#fff', fontSize: 10, fontWeight: 700, letterSpacing: '.05em',
-      }}>{!isImage && ext}</div>
+        cursor: isMedia ? 'pointer' : 'default',
+      }}>
+        {isVideo && <span style={{ fontSize: 14, lineHeight: 1 }}>▶</span>}
+        {!isMedia && ext}
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         {renaming ? (
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
@@ -1505,9 +1547,11 @@ function AttachmentRow({ attachment: a, theme, rtl, isCover, onDelete, onRename,
             }} />
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <a href={withToken(a.url)} target="_blank" rel="noreferrer" style={{
+            <a href={withToken(a.url)} onClick={isMedia ? openMedia : undefined}
+              target={isMedia ? undefined : '_blank'} rel="noreferrer" style={{
               fontSize: 13, fontWeight: 600, color: theme.text, textDecoration: 'none',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+              cursor: 'pointer',
             }}>{a.filename}</a>
             {isCover && (
               <span style={{
@@ -1547,6 +1591,65 @@ function AttachmentRow({ attachment: a, theme, rtl, isCover, onDelete, onRename,
           cursor: 'pointer', fontSize: 14, padding: 4,
         }} title={rtl ? 'حذف' : 'Delete'}>×</button>
       )}
+    </div>
+  );
+}
+
+// Centered overlay that previews an image or plays a video without leaving
+// the card. Click backdrop or Escape to close. zIndex sits above the card
+// modal (50) and the media picker (90).
+function AttachmentLightbox({ theme, rtl, attachment: a, onClose }) {
+  const isImage = a.mimeType?.startsWith('image/');
+  const isVideo = a.mimeType?.startsWith('video/');
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,.85)', backdropFilter: 'blur(6px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 24, direction: rtl ? 'rtl' : 'ltr',
+    }}>
+      <button onClick={onClose} aria-label="Close" style={{
+        position: 'absolute', top: 16, insetInlineEnd: 16,
+        width: 36, height: 36, borderRadius: '50%',
+        background: 'rgba(255,255,255,.12)', color: '#fff',
+        border: 'none', fontSize: 22, lineHeight: 1, cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'inherit',
+      }}>×</button>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        maxWidth: '90vw', maxHeight: '85vh',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+      }}>
+        {isImage && (
+          <img src={withToken(a.url)} alt={a.filename}
+            style={{ maxWidth: '90vw', maxHeight: '78vh', objectFit: 'contain', borderRadius: 6 }} />
+        )}
+        {isVideo && (
+          <video src={withToken(a.url)} controls autoPlay playsInline
+            style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 6, background: '#000' }} />
+        )}
+        {!isImage && !isVideo && (
+          <div style={{ color: '#fff', fontSize: 14 }}>
+            {rtl ? 'لا يمكن المعاينة' : 'Preview not available'}
+          </div>
+        )}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          color: 'rgba(255,255,255,.85)', fontSize: 12.5,
+          background: 'rgba(0,0,0,.4)', padding: '6px 12px', borderRadius: 6,
+        }}>
+          <span style={{ fontWeight: 600 }}>{a.filename}</span>
+          <a href={withToken(a.url)} download={a.filename}
+            style={{ color: '#fff', textDecoration: 'underline', fontSize: 12 }}>
+            {rtl ? 'تنزيل' : 'Download'}
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { emitBoardEvent, actorSocketId } from '../realtime.js';
 import { optimizeImageBuffer } from '../lib/optimize.js';
 import { putObject, getObjectBuffer, deleteObject, copyObject } from '../lib/storage.js';
 
-const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_BYTES = 50 * 1024 * 1024; // 50 MB — leaves room for short videos
 
 export async function attachmentRoutes(app: FastifyInstance) {
   // Custom auth: standard Bearer header OR ?token= query param.
@@ -52,12 +52,12 @@ export async function attachmentRoutes(app: FastifyInstance) {
     for await (const chunk of file.file) {
       totalBytes += chunk.length;
       if (totalBytes > MAX_BYTES) {
-        return reply.code(413).send({ error: 'too_large', message: 'File exceeds 10 MB' });
+        return reply.code(413).send({ error: 'too_large', message: 'File exceeds 50 MB' });
       }
       chunks.push(chunk);
     }
     if (file.file.truncated) {
-      return reply.code(413).send({ error: 'too_large', message: 'File exceeds 10 MB' });
+      return reply.code(413).send({ error: 'too_large', message: 'File exceeds 50 MB' });
     }
     let buffer: Buffer = Buffer.concat(chunks) as Buffer;
 
