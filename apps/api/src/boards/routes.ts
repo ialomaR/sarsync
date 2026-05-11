@@ -638,6 +638,11 @@ export async function boardsRoutes(app: FastifyInstance) {
         labels: { create: DEFAULT_LABELS },
       },
     });
+    await logActivity({
+      boardId: board.id, actorId: m.userId,
+      verb: 'board_created', targetType: 'board', targetId: board.id,
+      meta: { boardTitle: board.title, departmentId: board.departmentId },
+    });
     return reply.code(201).send({
       id: board.id, title: board.title, hue: board.hue, starred: false,
       departmentId: board.departmentId, teamId: board.teamId,
@@ -704,6 +709,11 @@ export async function boardsRoutes(app: FastifyInstance) {
     if (reply.sent) return;
     if (!canManageBoard(request.membership!, board)) return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can archive a board' });
     await prisma.board.update({ where: { id: board.id }, data: { archivedAt: new Date() } });
+    await logActivity({
+      boardId: board.id, actorId: request.userId!,
+      verb: 'board_archived', targetType: 'board', targetId: board.id,
+      meta: { boardTitle: board.title },
+    });
     return reply.code(204).send();
   });
 
@@ -717,6 +727,11 @@ export async function boardsRoutes(app: FastifyInstance) {
     if (!canManageBoard(request.membership!, board)) return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can restore a board' });
     if (!board.archivedAt) return reply.code(204).send();
     await prisma.board.update({ where: { id: board.id }, data: { archivedAt: null } });
+    await logActivity({
+      boardId: board.id, actorId: request.userId!,
+      verb: 'board_restored', targetType: 'board', targetId: board.id,
+      meta: { boardTitle: board.title },
+    });
     return reply.code(204).send();
   });
 

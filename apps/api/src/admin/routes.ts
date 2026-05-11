@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { loadMembership } from '../boards/auth.js';
@@ -569,5 +569,184 @@ export async function adminRoutes(app: FastifyInstance) {
       })),
       permissions: PERM_CATALOG,
     });
+  });
+
+  // ── Dashboard (admin-only, workspace-scoped) ────────────────────────────
+  // Every query in this section filters by workspaceId (directly or via
+  // board.workspaceId on Activity). The requireWorkspaceAdmin gate ensures
+  // only an admin of *this* workspace can hit these endpoints, so tenants
+  // never see each other's data.
+
+  app.get<{ Params: { workspaceId: string } }>('/admin/workspaces/:workspaceId/overview', async (request, reply) => {
+    if (!await requireWorkspaceAdmin(request, reply, request.params.workspaceId)) return;
+    const workspaceId = request.params.workspaceId;
+
+    const now = new Date();
+    const last24h  = new Date(now.getTime() - 24 * 3600_000);
+    const last7d   = new Date(now.getTime() - 7  * 24 * 3600_000);
+    const last30d  = new Date(now.getTime() - 30 * 24 * 3600_000);
+    const startOfDay = new Date(now); startOfDay.setHours(0, 0, 0, 0);
+
+    const wsBoards = { list: { board: { workspaceId } } } as const;
+
+    const [
+      boardsActive, boardsArchived,
+      cardsActive, cardsCompleted, cardsOverdue, cardsCompletedToday, cardsCompletedThisWeek,
+      memberCount, deptCount,
+      activity24h, activity7d, activity30d,
+      depts,
+    ] = await Promise.all([
+      prisma.board.count({ where: { workspaceId, archivedAt: null } }),
+      prisma.board.count({ where: { workspaceId, archivedAt: { not: null } } }),
+      prisma.card.count({ where: { archivedAt: null, completedAt: null, ...wsBoards, list: { board: { workspaceId, archivedAt: null } } } }),
+      prisma.card.count({ where: { archivedAt: null, completedAt: { not: null }, ...wsBoards } }),
+      prisma.card.count({ where: { archivedAt: null, completedAt: null, due: { lt: now }, list: { board: { workspaceId, archivedAt: null } } } }),
+      prisma.card.count({ where: { archivedAt: null, completedAt: { gte: startOfDay }, ...wsBoards } }),
+      prisma.card.count({ where: { archivedAt: null, completedAt: { gte: last7d }, ...wsBoards } }),
+      prisma.membership.count({ where: { workspaceId } }),
+      prisma.department.count({ where: { workspaceId } }),
+      prisma.activity.count({ where: { board: { workspaceId }, createdAt: { gte: last24h } } }),
+      prisma.activity.count({ where: { board: { workspaceId }, createdAt: { gte: last7d } } }),
+      prisma.activity.count({ where: { board: { workspaceId }, createdAt: { gte: last30d } } }),
+      prisma.department.findMany({
+        where: { workspaceId },
+        select: { id: true, name: true, nameAr: true, hue: true, icon: true, _count: { select: { members: true } } },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+
+    // Per-dept rollups in one query each (cards counts grouped by board.departmentId).
+    const cardCountsByDept = await prisma.card.groupBy({
+      by: ['listId'],
+      where: { archivedAt: null, list: { board: { workspaceId, archivedAt: null } } },
+      _count: { _all: true },
+    });
+    const listMap = await prisma.list.findMany({
+      where: { board: { workspaceId } },
+      select: { id: true, board: { select: { departmentId: true } } },
+    });
+    const listToDept = new Map(listMap.map((l) => [l.id, l.board.departmentId] as const));
+    type DeptAgg = { active: number; overdue: number; completedMonth: number };
+    const deptAgg = new Map<string, DeptAgg>();
+    const bump = (dId: string | null, key: keyof DeptAgg, n: number) => {
+      const k = dId || '__general__';
+      const cur = deptAgg.get(k) ?? { active: 0, overdue: 0, completedMonth: 0 };
+      cur[key] += n;
+      deptAgg.set(k, cur);
+    };
+    for (const c of cardCountsByDept) {
+      const dId = listToDept.get(c.listId) ?? null;
+      bump(dId, 'active', c._count._all);
+    }
+    const overdueByList = await prisma.card.groupBy({
+      by: ['listId'],
+      where: { archivedAt: null, completedAt: null, due: { lt: now }, list: { board: { workspaceId, archivedAt: null } } },
+      _count: { _all: true },
+    });
+    for (const c of overdueByList) bump(listToDept.get(c.listId) ?? null, 'overdue', c._count._all);
+    const completedMonthByList = await prisma.card.groupBy({
+      by: ['listId'],
+      where: { archivedAt: null, completedAt: { gte: last30d }, list: { board: { workspaceId } } },
+      _count: { _all: true },
+    });
+    for (const c of completedMonthByList) bump(listToDept.get(c.listId) ?? null, 'completedMonth', c._count._all);
+
+    // Daily completion velocity: cards completed per day over last 30d.
+    const completionsLast30d = await prisma.card.count({
+      where: { archivedAt: null, completedAt: { gte: last30d }, ...wsBoards },
+    });
+    const avgCompletionsPerDay = +(completionsLast30d / 30).toFixed(1);
+
+    return reply.send({
+      workspaceId,
+      counts: {
+        boards: { active: boardsActive, archived: boardsArchived },
+        cards:  { active: cardsActive, completed: cardsCompleted, overdue: cardsOverdue, completedToday: cardsCompletedToday, completedThisWeek: cardsCompletedThisWeek },
+        members: memberCount,
+        departments: deptCount,
+      },
+      activity: {
+        last24h: activity24h,
+        last7d:  activity7d,
+        last30d: activity30d,
+      },
+      velocity: { avgCompletionsPerDay },
+      departments: depts.map((d) => {
+        const agg = deptAgg.get(d.id) ?? { active: 0, overdue: 0, completedMonth: 0 };
+        return {
+          id: d.id, name: d.name, nameAr: d.nameAr, hue: d.hue, icon: d.icon,
+          memberCount: d._count.members,
+          active: agg.active,
+          overdue: agg.overdue,
+          completedThisMonth: agg.completedMonth,
+        };
+      }),
+    });
+  });
+
+  app.get<{
+    Params: { workspaceId: string };
+    Querystring: { limit?: string; before?: string; verb?: string; actorId?: string; departmentId?: string; boardId?: string; since?: string };
+  }>('/admin/workspaces/:workspaceId/activity', async (request, reply) => {
+    if (!await requireWorkspaceAdmin(request, reply, request.params.workspaceId)) return;
+    const workspaceId = request.params.workspaceId;
+    const limit = Math.min(parseInt(request.query.limit || '50', 10) || 50, 200);
+
+    // Tenant isolation: every row must belong to a board in this workspace.
+    const where: Prisma.ActivityWhereInput = {
+      board: { workspaceId },
+    };
+    if (request.query.verb)        where.verb = request.query.verb;
+    if (request.query.actorId)     where.actorId = request.query.actorId;
+    if (request.query.boardId)     where.boardId = request.query.boardId;
+    if (request.query.departmentId) {
+      where.board = { workspaceId, departmentId: request.query.departmentId };
+    }
+    if (request.query.before) {
+      where.createdAt = { lt: new Date(request.query.before) };
+    }
+    if (request.query.since) {
+      const since = new Date(request.query.since);
+      where.createdAt = { ...(where.createdAt as object || {}), gte: since };
+    }
+
+    const rows = await prisma.activity.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1, // peek one extra to know if there's a next page
+      include: {
+        actor: { select: { id: true, firstName: true, lastName: true, avatarColor: true } },
+        board: { select: { id: true, title: true, hue: true, departmentId: true, department: { select: { id: true, name: true, nameAr: true, hue: true } } } },
+      },
+    });
+
+    const hasMore = rows.length > limit;
+    const items = (hasMore ? rows.slice(0, limit) : rows).map((a) => ({
+      id: a.id,
+      verb: a.verb,
+      targetType: a.targetType,
+      targetId: a.targetId,
+      meta: a.meta as Record<string, unknown> | null,
+      createdAt: a.createdAt.toISOString(),
+      actor: {
+        id: a.actor.id,
+        name: `${a.actor.firstName} ${a.actor.lastName}`.trim(),
+        avatarColor: a.actor.avatarColor,
+      },
+      board: {
+        id: a.board.id,
+        title: a.board.title,
+        hue: a.board.hue,
+        department: a.board.department ? {
+          id: a.board.department.id,
+          name: a.board.department.name,
+          nameAr: a.board.department.nameAr,
+          hue: a.board.department.hue,
+        } : null,
+      },
+    }));
+    const nextCursor = hasMore ? items[items.length - 1].createdAt : null;
+
+    return reply.send({ items, nextCursor });
   });
 }

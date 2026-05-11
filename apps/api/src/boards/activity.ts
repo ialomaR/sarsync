@@ -9,13 +9,14 @@ export type Verb =
   | 'label_added' | 'label_removed'
   | 'comment_added'
   | 'checklist_added' | 'checklist_completed' | 'checklist_uncompleted'
-  | 'list_created' | 'list_renamed' | 'list_archived';
+  | 'list_created' | 'list_renamed' | 'list_archived'
+  | 'board_created' | 'board_archived' | 'board_restored';
 
 export async function logActivity(args: {
   boardId: string;
   actorId: string;
   verb: Verb;
-  targetType: 'card' | 'list' | 'comment' | 'checklist';
+  targetType: 'card' | 'list' | 'comment' | 'checklist' | 'board';
   targetId: string;
   meta?: Record<string, unknown>;
 }) {

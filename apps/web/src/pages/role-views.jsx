@@ -185,7 +185,7 @@ export function AdminConsole({ themeName, accent, rtl }) {
   const workspaceId = auth.memberships[0]?.workspaceId;
   const myRole = auth.memberships[0]?.role;
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get('tab') || (searchParams.get('role') ? 'members' : 'departments');
+  const initialTab = searchParams.get('tab') || (searchParams.get('role') ? 'members' : 'dashboard');
   const [tab, setTab] = React.useState(initialTab);
   const roleFilter = searchParams.get('role');
 
@@ -199,6 +199,7 @@ export function AdminConsole({ themeName, accent, rtl }) {
   }, [searchParams]);
 
   const tabs = [
+    { id: 'dashboard',   label: rtl ? 'لوحة المراقبة' : 'Dashboard' },
     { id: 'departments', label: rtl ? 'الأقسام' : 'Departments' },
     { id: 'teams',       label: rtl ? 'الفرق' : 'Teams' },
     { id: 'members',     label: rtl ? 'الأعضاء' : 'Members' },
@@ -258,6 +259,7 @@ export function AdminConsole({ themeName, accent, rtl }) {
         </div>
 
         <div style={{ padding: '22px 26px', overflowY: 'auto', minHeight: 0 }}>
+          {tab === 'dashboard'   && <DashboardPanel    theme={theme} rtl={rtl} workspaceId={workspaceId} />}
           {tab === 'departments' && <DepartmentsPanel theme={theme} rtl={rtl} workspaceId={workspaceId} canEdit={myRole === 'admin'} />}
           {tab === 'teams'       && <TeamsPanel       theme={theme} rtl={rtl} workspaceId={workspaceId} canEdit={myRole === 'admin'} />}
           {tab === 'members'     && <MembersPanel     theme={theme} rtl={rtl} workspaceId={workspaceId} canEdit={myRole === 'admin'} initialFilter={roleFilter} />}
@@ -270,6 +272,286 @@ export function AdminConsole({ themeName, accent, rtl }) {
 }
 
 // ── Departments panel ─────────────────────────────────────────────────────
+
+// ── Dashboard panel (admin only) ───────────────────────────────────────────
+// Workspace-wide monitoring: KPI strip, live activity feed, department
+// breakdown. Every backend call is scoped to this workspace by the server.
+
+function DashboardPanel({ theme, rtl, workspaceId }) {
+  const navigate = useNavigate();
+  const [overview, setOverview] = React.useState(null);
+  const [overviewErr, setOverviewErr] = React.useState(null);
+
+  const refetchOverview = React.useCallback(async () => {
+    try {
+      const r = await api(`/admin/workspaces/${workspaceId}/overview`);
+      setOverview(r);
+      setOverviewErr(null);
+    } catch (err) {
+      setOverviewErr(err);
+    }
+  }, [workspaceId]);
+
+  React.useEffect(() => { refetchOverview(); }, [refetchOverview]);
+
+  if (overviewErr) return <CenterMsg theme={theme} error>{overviewErr.message}</CenterMsg>;
+  if (!overview)   return <CenterMsg theme={theme}>{rtl ? 'جاري التحميل…' : 'Loading…'}</CenterMsg>;
+
+  const c = overview.counts;
+  const a = overview.activity;
+  return (
+    <div>
+      <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.text, margin: '0 0 14px', letterSpacing: '-.01em' }}>
+        {rtl ? 'لوحة المراقبة' : 'Workspace dashboard'}
+      </h2>
+
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 18,
+      }}>
+        <KpiCard theme={theme} label={rtl ? 'لوحات نشطة' : 'Active boards'} value={c.boards.active} sub={`+${c.boards.archived} ${rtl ? 'مؤرشفة' : 'archived'}`} />
+        <KpiCard theme={theme} label={rtl ? 'بطاقات نشطة' : 'Active cards'} value={c.cards.active} />
+        <KpiCard theme={theme} label={rtl ? 'متأخرة' : 'Overdue'} value={c.cards.overdue} tone={c.cards.overdue > 0 ? '#DC2626' : null} />
+        <KpiCard theme={theme} label={rtl ? 'مكتملة اليوم' : 'Completed today'} value={c.cards.completedToday} tone="#0E7C66" />
+        <KpiCard theme={theme} label={rtl ? 'مكتملة الأسبوع' : 'Completed this week'} value={c.cards.completedThisWeek} />
+        <KpiCard theme={theme} label={rtl ? 'متوسط الإنجاز يومياً' : 'Avg done / day'} value={overview.velocity.avgCompletionsPerDay} sub={rtl ? 'آخر 30 يوم' : 'last 30d'} />
+        <KpiCard theme={theme} label={rtl ? 'الأعضاء' : 'Members'} value={c.members} sub={`${c.departments} ${rtl ? 'أقسام' : 'depts'}`} />
+        <KpiCard theme={theme} label={rtl ? 'النشاط (24س)' : 'Activity (24h)'} value={a.last24h} sub={`${a.last7d}/${a.last30d} ${rtl ? 'أسبوع/شهر' : 'wk/mo'}`} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 14, alignItems: 'start' }}>
+        <ActivityFeedPanel theme={theme} rtl={rtl} workspaceId={workspaceId}
+          departments={overview.departments} />
+        <DeptBreakdownPanel theme={theme} rtl={rtl} departments={overview.departments}
+          onOpen={(id) => navigate(`/dept/${id}`)} />
+      </div>
+    </div>
+  );
+}
+
+function KpiCard({ theme, label, value, sub, tone }) {
+  return (
+    <div style={{
+      background: theme.surface, borderRadius: theme.cardRadius,
+      border: `.5px solid ${theme.border}`,
+      padding: '12px 14px',
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: theme.muted, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: tone || theme.text, fontVariantNumeric: 'tabular-nums' }}>{value ?? '—'}</div>
+      {sub && <div style={{ fontSize: 10.5, color: theme.mutedDim, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function ActivityFeedPanel({ theme, rtl, workspaceId, departments }) {
+  const navigate = useNavigate();
+  const [items, setItems] = React.useState([]);
+  const [cursor, setCursor] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [filter, setFilter] = React.useState({ departmentId: '', verb: '' });
+
+  const loadPage = React.useCallback(async (resetCursor) => {
+    setLoading(true);
+    const qs = new URLSearchParams();
+    qs.set('limit', '40');
+    if (filter.departmentId) qs.set('departmentId', filter.departmentId);
+    if (filter.verb)         qs.set('verb', filter.verb);
+    if (resetCursor && cursor) qs.set('before', cursor);
+    try {
+      const r = await api(`/admin/workspaces/${workspaceId}/activity?${qs.toString()}`);
+      setItems((prev) => resetCursor ? [...prev, ...r.items] : r.items);
+      setCursor(r.nextCursor);
+    } catch {} finally { setLoading(false); }
+  }, [workspaceId, filter, cursor]);
+
+  React.useEffect(() => {
+    setItems([]); setCursor(null);
+    loadPage(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter.departmentId, filter.verb]);
+
+  const VERBS = [
+    { id: '', label: rtl ? 'كل الأحداث' : 'All actions' },
+    { id: 'board_created',  label: rtl ? 'إنشاء لوحة' : 'Board created' },
+    { id: 'board_archived', label: rtl ? 'أرشفة لوحة' : 'Board archived' },
+    { id: 'card_created',   label: rtl ? 'إنشاء بطاقة' : 'Card created' },
+    { id: 'card_moved',     label: rtl ? 'نقل بطاقة' : 'Card moved' },
+    { id: 'card_deleted',   label: rtl ? 'حذف بطاقة' : 'Card deleted' },
+    { id: 'comment_added',  label: rtl ? 'تعليق' : 'Comment' },
+    { id: 'member_assigned',label: rtl ? 'تعيين عضو' : 'Member assigned' },
+  ];
+
+  return (
+    <div style={{
+      background: theme.surface, borderRadius: theme.cardRadius,
+      border: `.5px solid ${theme.border}`,
+      padding: 14, minHeight: 320,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: theme.text, margin: 0 }}>
+          {rtl ? 'موجز النشاط' : 'Activity feed'}
+        </h3>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <select value={filter.departmentId} onChange={(e) => setFilter((f) => ({ ...f, departmentId: e.target.value }))}
+            style={selectStyle(theme)}>
+            <option value="">{rtl ? 'كل الأقسام' : 'All departments'}</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{localizedName(d, rtl)}</option>)}
+          </select>
+          <select value={filter.verb} onChange={(e) => setFilter((f) => ({ ...f, verb: e.target.value }))}
+            style={selectStyle(theme)}>
+            {VERBS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {items.length === 0 && !loading && (
+        <div style={{ padding: 28, textAlign: 'center', color: theme.muted, fontSize: 12.5 }}>
+          {rtl ? 'لا يوجد نشاط مطابق' : 'No matching activity'}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {items.map((it) => (
+          <ActivityRow key={it.id} item={it} theme={theme} rtl={rtl}
+            onOpen={() => {
+              if (it.targetType === 'card') navigate(`/b/${it.board.id}?card=${it.targetId}`);
+              else navigate(`/b/${it.board.id}`);
+            }} />
+        ))}
+      </div>
+      {cursor && (
+        <div style={{ textAlign: 'center', marginTop: 12 }}>
+          <button onClick={() => loadPage(true)} disabled={loading} style={{
+            background: theme.surface2, color: theme.text,
+            border: `.5px solid ${theme.border}`, padding: '6px 14px',
+            borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: loading ? 'wait' : 'pointer',
+            fontFamily: 'inherit',
+          }}>{loading ? '…' : (rtl ? 'تحميل المزيد' : 'Load more')}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActivityRow({ item, theme, rtl, onOpen }) {
+  const verbLabel = ACTIVITY_VERB_LABELS[item.verb]?.[rtl ? 'ar' : 'en'] || item.verb;
+  const cardTitle = (item.meta && (item.meta.cardTitle || item.meta.boardTitle)) || '';
+  return (
+    <button onClick={onOpen} style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '8px 10px', borderRadius: 6,
+      background: 'transparent', border: `.5px solid ${theme.border}`,
+      cursor: 'pointer', textAlign: rtl ? 'right' : 'left',
+      fontFamily: 'inherit', color: theme.text, width: '100%',
+    }}
+    onMouseEnter={(e) => e.currentTarget.style.background = theme.surface2}
+    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+      <Avatar id={item.actor.id} size={28} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, color: theme.text, lineHeight: 1.45 }}>
+          <strong style={{ fontWeight: 600 }}>{item.actor.name}</strong>{' '}
+          <span style={{ color: theme.muted }}>{verbLabel}</span>
+          {cardTitle && <span style={{ color: theme.text }}> · {cardTitle}</span>}
+        </div>
+        <div style={{ fontSize: 11, color: theme.mutedDim, marginTop: 2 }}>
+          {item.board.title}
+          {item.board.department && ` · ${localizedName(item.board.department, rtl)}`}
+          {' · '}{relTime(new Date(item.createdAt), rtl)}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function DeptBreakdownPanel({ theme, rtl, departments, onOpen }) {
+  return (
+    <div style={{
+      background: theme.surface, borderRadius: theme.cardRadius,
+      border: `.5px solid ${theme.border}`,
+      padding: 14,
+    }}>
+      <h3 style={{ fontSize: 14, fontWeight: 700, color: theme.text, margin: '0 0 10px' }}>
+        {rtl ? 'توزيع الأقسام' : 'Department breakdown'}
+      </h3>
+      {departments.length === 0 && (
+        <div style={{ padding: 14, textAlign: 'center', color: theme.muted, fontSize: 12 }}>
+          {rtl ? 'لا توجد أقسام' : 'No departments yet'}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {departments.map((d) => (
+          <button key={d.id} onClick={() => onOpen(d.id)} style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 10px', borderRadius: 6,
+            background: 'transparent', border: `.5px solid ${theme.border}`,
+            cursor: 'pointer', textAlign: rtl ? 'right' : 'left',
+            fontFamily: 'inherit', color: theme.text,
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = theme.surface2}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+            <span style={{
+              width: 22, height: 22, borderRadius: 5,
+              background: `oklch(.78 .12 ${d.hue})`, color: `oklch(.32 .14 ${d.hue})`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, fontWeight: 700, flexShrink: 0,
+            }}>{d.icon || (d.name?.[0] || 'D').toUpperCase()}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {localizedName(d, rtl)}
+              </div>
+              <div style={{ fontSize: 11, color: theme.muted, marginTop: 2 }}>
+                {d.memberCount} {rtl ? 'عضو' : 'members'} · {d.active} {rtl ? 'نشطة' : 'active'}
+                {d.overdue > 0 && <span style={{ color: '#DC2626' }}> · {d.overdue} {rtl ? 'متأخرة' : 'overdue'}</span>}
+                {' · '}{d.completedThisMonth} {rtl ? 'مكتملة الشهر' : 'done/mo'}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function selectStyle(theme) {
+  return {
+    padding: '5px 8px', borderRadius: 5,
+    background: theme.surface2, color: theme.text,
+    border: `.5px solid ${theme.border}`,
+    fontSize: 11.5, fontFamily: 'inherit', outline: 'none',
+  };
+}
+
+function relTime(date, rtl) {
+  const diff = (Date.now() - date.getTime()) / 1000;
+  if (diff < 60)        return rtl ? 'الآن' : 'just now';
+  if (diff < 3600)      return rtl ? `قبل ${Math.floor(diff / 60)} د` : `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400)     return rtl ? `قبل ${Math.floor(diff / 3600)} س` : `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400 * 7) return rtl ? `قبل ${Math.floor(diff / 86400)} يوم` : `${Math.floor(diff / 86400)}d ago`;
+  return date.toLocaleDateString(rtl ? 'ar' : 'en');
+}
+
+const ACTIVITY_VERB_LABELS = {
+  board_created:        { en: 'created a board',           ar: 'أنشأ لوحة' },
+  board_archived:       { en: 'archived a board',          ar: 'أرشف لوحة' },
+  board_restored:       { en: 'restored a board',          ar: 'استعاد لوحة' },
+  card_created:         { en: 'created a card',            ar: 'أنشأ بطاقة' },
+  card_moved:           { en: 'moved a card',              ar: 'نقل بطاقة' },
+  card_renamed:         { en: 'renamed a card',            ar: 'غيّر اسم بطاقة' },
+  card_archived:        { en: 'archived a card',           ar: 'أرشف بطاقة' },
+  card_deleted:         { en: 'deleted a card',            ar: 'حذف بطاقة' },
+  card_described:       { en: 'updated a card',            ar: 'حدّث بطاقة' },
+  card_due_set:         { en: 'set a due date',            ar: 'حدّد تاريخ استحقاق' },
+  card_due_cleared:     { en: 'cleared a due date',        ar: 'مسح تاريخ استحقاق' },
+  member_assigned:      { en: 'assigned a member',         ar: 'أضاف عضواً' },
+  member_unassigned:    { en: 'unassigned a member',       ar: 'أزال عضواً' },
+  label_added:          { en: 'added a label',             ar: 'أضاف وسماً' },
+  label_removed:        { en: 'removed a label',           ar: 'أزال وسماً' },
+  comment_added:        { en: 'commented',                 ar: 'علّق' },
+  checklist_added:      { en: 'added a checklist item',    ar: 'أضاف مهمة فرعية' },
+  checklist_completed:  { en: 'completed a checklist',     ar: 'أنجز مهمة فرعية' },
+  checklist_uncompleted:{ en: 'reopened a checklist',      ar: 'أعاد فتح مهمة' },
+  list_created:         { en: 'added a list',              ar: 'أضاف قائمة' },
+  list_renamed:         { en: 'renamed a list',            ar: 'غيّر اسم قائمة' },
+  list_archived:        { en: 'archived a list',           ar: 'أرشف قائمة' },
+};
 
 function DepartmentsPanel({ theme, rtl, workspaceId, canEdit }) {
   const [state, setState] = React.useState({ status: 'loading', items: [], error: null });
