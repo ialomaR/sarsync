@@ -27,6 +27,16 @@ export function BoardPage() {
   const canDelete = canDeleteBoard(m);
   const found = cardId && !cardId.startsWith('tmp-') ? board.findCard(cardId) : null;
 
+  const [filterText, setFilterText] = React.useState('');
+  const visibleLists = React.useMemo(() => {
+    const q = filterText.trim().toLowerCase();
+    if (!q) return board.lists;
+    return board.lists.map((l) => ({
+      ...l,
+      cards: l.cards.filter((c) => (c.title || '').toLowerCase().includes(q)),
+    }));
+  }, [board.lists, filterText]);
+
   const openCard = (cid) => {
     if (cid.startsWith('tmp-')) return;
     const next = new URLSearchParams(params);
@@ -60,12 +70,12 @@ export function BoardPage() {
               onDeleteBoard={canDelete ? board.deleteBoard : null}
               onUploadCover={canManage ? board.uploadCover : null}
               onRemoveCover={canManage ? board.removeCover : null}
-              onAddCardToFirstList={canEdit && board.lists[0] ? () => {
-                const title = window.prompt(s.rtl ? 'عنوان البطاقة' : 'Card title');
-                if (title?.trim()) board.addCard(board.lists[0].id, title.trim());
-              } : null} />
+              lists={board.lists}
+              onAddCard={canEdit ? board.addCard : null}
+              filterText={filterText}
+              onFilterChange={setFilterText} />
             <DragProvider onMove={canEdit ? board.moveCard : () => {}}>
-              <KanbanBoard theme={theme} lists={board.lists} density={s.density}
+              <KanbanBoard theme={theme} lists={visibleLists} density={s.density}
                 showAvatars={s.showAvatars} rtl={s.rtl}
                 canEdit={canEdit}
                 onCardClick={openCard}

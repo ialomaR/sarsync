@@ -7,13 +7,17 @@ import { useBoardData } from '../state/BoardDataContext.jsx';
 import { iconBtn, pillBtn } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
 
-export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onDeleteBoard, canDelete, onAddCardToFirstList, onUploadCover, onRemoveCover }) {
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange }) {
   const ctx = useBoardData();
   const navigate = useNavigate();
   const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
   const moreRef = React.useRef(null);
   const coverInputRef = React.useRef(null);
+  const filterRef = React.useRef(null);
+  const newCardRef = React.useRef(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [filterOpen, setFilterOpen] = React.useState(false);
+  const [newCardOpen, setNewCardOpen] = React.useState(false);
   const [renaming, setRenaming] = React.useState(false);
   const [name, setName] = React.useState(board.title);
   const [uploadingCover, setUploadingCover] = React.useState(false);
@@ -108,21 +112,56 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
             <AvatarStack ids={memberIds} size={26} max={5} ringColor={theme.boardBg} />
           </div>
         )}
-        <button style={pillBtn(theme)}>
+        <button ref={filterRef} onClick={() => setFilterOpen((v) => !v)} style={{
+          ...pillBtn(theme),
+          ...(filterText ? { background: theme.accentSoft, color: theme.accent, borderColor: theme.accent } : null),
+        }}>
           <Icon.filter /> {rtl ? 'تصفية' : 'Filter'}
+          {filterText && <span style={{ fontSize: 10, fontWeight: 700 }}>·</span>}
         </button>
+        <Popover anchorRef={filterRef} open={filterOpen} onClose={() => setFilterOpen(false)} theme={theme} width={260} align="end">
+          <div style={{ padding: 4 }}>
+            <input autoFocus value={filterText || ''}
+              onChange={(e) => onFilterChange?.(e.target.value)}
+              placeholder={rtl ? 'بحث في عناوين البطاقات…' : 'Search card titles…'}
+              style={{
+                width: '100%', padding: '8px 10px', borderRadius: 5,
+                background: theme.surface2, color: theme.text,
+                border: `.5px solid ${theme.border}`,
+                fontSize: 13, fontFamily: 'inherit', outline: 'none',
+              }} />
+            {filterText && (
+              <button onClick={() => onFilterChange?.('')} style={{
+                marginTop: 6, width: '100%', padding: '6px 8px', borderRadius: 5,
+                background: 'transparent', border: `.5px solid ${theme.border}`,
+                color: theme.muted, fontSize: 12, fontWeight: 500,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>{rtl ? 'مسح الفلتر' : 'Clear filter'}</button>
+            )}
+          </div>
+        </Popover>
         {(canManage || canDelete) && (
           <button ref={moreRef} onClick={() => setMenuOpen((v) => !v)} style={pillBtn(theme)}>
             <Icon.more />
           </button>
         )}
-        {onAddCardToFirstList && (
-          <button onClick={onAddCardToFirstList} style={{
-            ...pillBtn(theme),
-            background: theme.accent, color: theme.accentText, border: 'none', fontWeight: 600,
-          }}>
-            <Icon.plus /> {rtl ? 'بطاقة جديدة' : 'New card'}
-          </button>
+        {canEdit && onAddCard && lists?.length > 0 && (
+          <>
+            <button ref={newCardRef} onClick={() => setNewCardOpen((v) => !v)} style={{
+              ...pillBtn(theme),
+              background: theme.accent, color: theme.accentText, border: 'none', fontWeight: 600,
+            }}>
+              <Icon.plus /> {rtl ? 'بطاقة جديدة' : 'New card'}
+            </button>
+            <Popover anchorRef={newCardRef} open={newCardOpen} onClose={() => setNewCardOpen(false)} theme={theme} width={280} align="end">
+              <NewCardForm theme={theme} rtl={rtl} lists={lists}
+                onSubmit={(listId, title) => {
+                  onAddCard(listId, title);
+                  setNewCardOpen(false);
+                }}
+                onCancel={() => setNewCardOpen(false)} />
+            </Popover>
+          </>
         )}
         <input ref={coverInputRef} type="file" accept="image/*" hidden onChange={handleCoverFile} />
         <Popover anchorRef={moreRef} open={menuOpen} onClose={() => setMenuOpen(false)} theme={theme} width={210} align="end">
@@ -156,6 +195,63 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
             </MenuItem>
           )}
         </Popover>
+      </div>
+    </div>
+  );
+}
+
+function NewCardForm({ theme, rtl, lists, onSubmit, onCancel }) {
+  const [listId, setListId] = React.useState(lists[0]?.id || '');
+  const [title, setTitle] = React.useState('');
+  const submit = () => {
+    if (!title.trim() || !listId) return;
+    onSubmit(listId, title.trim());
+  };
+  return (
+    <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div>
+        <label style={{ fontSize: 11, fontWeight: 600, color: theme.muted, display: 'block', marginBottom: 4 }}>
+          {rtl ? 'القائمة' : 'List'}
+        </label>
+        <select value={listId} onChange={(e) => setListId(e.target.value)} style={{
+          width: '100%', padding: '6px 8px', borderRadius: 5,
+          background: theme.surface2, color: theme.text,
+          border: `.5px solid ${theme.border}`,
+          fontSize: 12.5, fontFamily: 'inherit', outline: 'none',
+        }}>
+          {lists.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
+        </select>
+      </div>
+      <div>
+        <label style={{ fontSize: 11, fontWeight: 600, color: theme.muted, display: 'block', marginBottom: 4 }}>
+          {rtl ? 'العنوان' : 'Title'}
+        </label>
+        <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); submit(); }
+            if (e.key === 'Escape') onCancel();
+          }}
+          placeholder={rtl ? 'اكتب عنوان البطاقة…' : 'Enter a card title…'}
+          style={{
+            width: '100%', padding: '7px 9px', borderRadius: 5,
+            background: theme.surface2, color: theme.text,
+            border: `.5px solid ${theme.border}`,
+            fontSize: 13, fontFamily: 'inherit', outline: 'none',
+          }} />
+      </div>
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} style={{
+          background: 'transparent', color: theme.muted, border: `.5px solid ${theme.border}`,
+          padding: '5px 10px', borderRadius: 5, fontSize: 12, fontWeight: 500,
+          cursor: 'pointer', fontFamily: 'inherit',
+        }}>{rtl ? 'إلغاء' : 'Cancel'}</button>
+        <button onClick={submit} disabled={!title.trim() || !listId} style={{
+          background: theme.accent, color: theme.accentText, border: 'none',
+          padding: '5px 14px', borderRadius: 5, fontSize: 12, fontWeight: 600,
+          cursor: title.trim() ? 'pointer' : 'default',
+          opacity: title.trim() ? 1 : 0.6,
+          fontFamily: 'inherit',
+        }}>{rtl ? 'إضافة' : 'Add'}</button>
       </div>
     </div>
   );
