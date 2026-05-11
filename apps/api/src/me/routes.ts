@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
+import { canViewBoard } from '../boards/auth.js';
 
 export async function meRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -12,6 +13,7 @@ export async function meRoutes(app: FastifyInstance) {
     const cards = await prisma.card.findMany({
       where: {
         archivedAt: null,
+        list: { board: { archivedAt: null } },
         members: { some: { userId } },
       },
       orderBy: [{ due: 'asc' }, { updatedAt: 'desc' }],
@@ -65,6 +67,7 @@ export async function meRoutes(app: FastifyInstance) {
     const completedThisWeek = await prisma.card.count({
       where: {
         completedAt: { gte: new Date(now - 7 * 24 * 3600_000) },
+        list: { board: { archivedAt: null } },
         OR: [
           { members: { some: { userId } } },
           { completedById: userId },
@@ -129,5 +132,66 @@ export async function meRoutes(app: FastifyInstance) {
     }
 
     return reply.send({ workspaces: result });
+  });
+
+  // Archived boards across all my workspaces. Visibility follows canViewBoard
+  // — admins see every workspace's archive, non-admins see only the boards
+  // they would normally have access to (dept-based + explicit grants).
+  app.get('/me/archived-boards', async (request, reply) => {
+    const userId = request.userId!;
+    const memberships = await prisma.membership.findMany({
+      where: { userId },
+      include: { workspace: { select: { id: true, name: true } } },
+    });
+    if (memberships.length === 0) return reply.send({ boards: [] });
+
+    const explicit = await prisma.boardMember.findMany({
+      where: { userId },
+      select: { boardId: true },
+    });
+    const boardAccessIds = new Set(explicit.map((e) => e.boardId));
+
+    const boards = await prisma.board.findMany({
+      where: {
+        workspaceId: { in: memberships.map((m) => m.workspaceId) },
+        archivedAt: { not: null },
+      },
+      include: { department: { select: { id: true, name: true, nameAr: true, hue: true } } },
+      orderBy: { archivedAt: 'desc' },
+    });
+
+    const membershipByWs = new Map(memberships.map((m) => [m.workspaceId, m]));
+    const visible = boards.filter((b) => {
+      const m = membershipByWs.get(b.workspaceId);
+      if (!m) return false;
+      return canViewBoard(
+        {
+          role: m.role, departmentId: m.departmentId, teamId: m.teamId,
+          boardAccessIds,
+        },
+        { id: b.id, departmentId: b.departmentId, teamId: b.teamId },
+      );
+    });
+
+    return reply.send({
+      boards: visible.map((b) => {
+        const m = membershipByWs.get(b.workspaceId)!;
+        return {
+          id: b.id,
+          title: b.title,
+          subtitle: b.subtitle,
+          hue: b.hue,
+          coverUrl: b.coverImagePath ? `/api/boards/${b.id}/cover` : null,
+          archivedAt: b.archivedAt!.toISOString(),
+          workspaceId: b.workspaceId,
+          workspaceName: m.workspace.name,
+          departmentId: b.departmentId,
+          departmentName: b.department?.name ?? null,
+          departmentNameAr: b.department?.nameAr ?? null,
+          departmentHue: b.department?.hue ?? null,
+          viewerRole: m.role,
+        };
+      }),
+    });
   });
 }

@@ -93,6 +93,7 @@ export function Sidebar({ theme, rtl }) {
   const navItems = [
     { icon: 'board', label: rtl ? 'اللوحات' : 'Boards', to: '/boards', active: onBoards },
     { icon: 'check', label: rtl ? 'مهامي' : 'My work',  to: '/me',     active: location.pathname === '/me' },
+    { icon: 'paper', label: rtl ? 'الأرشيف' : 'Archive', to: '/archive', active: location.pathname === '/archive' },
   ];
   // Non-admins: single Department link to their own. Admins get the full
   // collapsible section below instead.

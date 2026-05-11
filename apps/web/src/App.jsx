@@ -10,6 +10,7 @@ import { DepartmentPage } from './pages/DepartmentPage.jsx';
 import { MyWorkPage } from './pages/MyWorkPage.jsx';
 import { UserProfilePage } from './pages/UserProfilePage.jsx';
 import { SystemAdminPage } from './pages/SystemAdminPage.jsx';
+import { ArchivePage } from './pages/ArchivePage.jsx';
 import {
   SignInScreen, SignUpScreen, ForgotScreen, ResetScreen,
   OtpScreen, EmailVerifyScreen, WorkspacePickerScreen,
@@ -103,6 +104,7 @@ export default function App() {
               <Route path="/me"       element={<ProtectedRoute><MyWorkPage /></ProtectedRoute>} />
               <Route path="/u/:id"    element={<ProtectedRoute><UserProfilePage /></ProtectedRoute>} />
               <Route path="/system"   element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
+              <Route path="/archive"  element={<ProtectedRoute><ArchivePage /></ProtectedRoute>} />
 
               <Route path="*" element={<Navigate to="/auth/signin" replace />} />
             </Routes>

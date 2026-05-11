@@ -61,6 +61,9 @@ const MoveCard = z.object({
   toListId: z.string().min(1),
   toIndex: z.number().int().nonnegative(),
 });
+const MoveList = z.object({
+  toIndex: z.number().int().nonnegative(),
+});
 const AddChecklistItem = z.object({ text: z.string().min(1).max(500) });
 const UpdateChecklistItem = z.object({
   done: z.boolean().optional(),
@@ -686,6 +689,19 @@ export async function boardsRoutes(app: FastifyInstance) {
     return reply.code(204).send();
   });
 
+  // Restore an archived board: clear archivedAt so it returns to the home
+  // page, sidebar, and "My Work" lists. Managers only — same gate as archive.
+  app.delete<{ Params: { id: string } }>('/boards/:id/archive', async (request, reply) => {
+    const board = await prisma.board.findUnique({ where: { id: request.params.id } });
+    if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
+    await loadMembership(request, reply, board.workspaceId);
+    if (reply.sent) return;
+    if (!canManageBoard(request.membership!, board)) return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can restore a board' });
+    if (!board.archivedAt) return reply.code(204).send();
+    await prisma.board.update({ where: { id: board.id }, data: { archivedAt: null } });
+    return reply.code(204).send();
+  });
+
   app.delete<{ Params: { id: string } }>('/boards/:id', async (request, reply) => {
     const board = await prisma.board.findUnique({ where: { id: request.params.id } });
     if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
@@ -716,6 +732,32 @@ export async function boardsRoutes(app: FastifyInstance) {
       id: updated.id, title: updated.title, position: updated.position,
     }, actorSocketId(request));
     return reply.send({ id: updated.id, title: updated.title, position: updated.position });
+  });
+
+  // Move a list within its board. Uses fractional indexing (midpoint of the
+  // neighbours at the destination index) so reordering is a single UPDATE
+  // and never reshuffles the other rows.
+  app.patch<{ Params: { id: string }; Body: unknown }>('/lists/:id/move', async (request, reply) => {
+    const list = await prisma.list.findUnique({ where: { id: request.params.id }, include: { board: true } });
+    if (!list) return reply.code(404).send({ error: 'not_found', message: 'List not found' });
+    await loadMembership(request, reply, list.board.workspaceId);
+    if (reply.sent) return;
+    if (!canEditBoard(request.membership!, list.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit' });
+
+    const parsed = MoveList.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
+
+    const siblings = await prisma.list.findMany({
+      where: { boardId: list.boardId, archivedAt: null },
+      select: { id: true, position: true },
+    });
+    const position = positionAt(siblings, parsed.data.toIndex, list.id);
+
+    const updated = await prisma.list.update({ where: { id: list.id }, data: { position } });
+    emitBoardEvent(list.boardId, 'list:moved', {
+      id: updated.id, position: updated.position,
+    }, actorSocketId(request));
+    return reply.send({ id: updated.id, position: updated.position });
   });
 
   app.delete<{ Params: { id: string } }>('/lists/:id', async (request, reply) => {
