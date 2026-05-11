@@ -9,7 +9,7 @@ import { buildTheme } from '../ui/theme.js';
 import { useBoardApi } from '../state/useBoardApi.js';
 import { DragProvider } from '../state/board-state.jsx';
 import { BoardDataProvider } from '../state/BoardDataContext.jsx';
-import { activeMembership, canEditBoard, canManageBoard, canDeleteBoard } from '../state/permissions.js';
+import { activeMembership, canEditBoard, canManageBoard, canDeleteBoard, canEditCard } from '../state/permissions.js';
 import { BoardError, LoadingScreen } from '../ui/States.jsx';
 
 export function BoardPage() {
@@ -79,6 +79,8 @@ export function BoardPage() {
                 cardId={found.card.id} listTitle={found.list.title}
                 workspaceId={board.board.workspaceId}
                 canEdit={canEdit}
+                membership={m}
+                boardDepartmentId={board.board.departmentId}
                 onClose={closeCard}
                 onCardChanged={(patch) => board.patchLocalCard(found.card.id, patch)}
                 onRefetchBoard={board.refetch} />

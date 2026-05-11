@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
-import { loadMembership, canViewBoard, canEditBoard, canManageBoard, hasDeptAccess } from './auth.js';
+import { loadMembership, canViewBoard, canEditBoard, canEditCard, canManageBoard, hasDeptAccess } from './auth.js';
 import { positionAt } from './positions.js';
 import { serializeBoard, serializeLabel, serializeUserMini } from './serialize.js';
 import { logActivity } from './activity.js';
@@ -336,7 +336,9 @@ export async function boardsRoutes(app: FastifyInstance) {
     if (!card) return reply.code(404).send({ error: 'not_found', message: 'Card not found' });
     await loadMembership(request, reply, card.list.board.workspaceId);
     if (reply.sent) return;
-    if (!canEditBoard(request.membership!, card.list.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit' });
+    if (!canEditCard(request.membership!, card, card.list.board)) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Only the card creator (or a manager) can edit this card' });
+    }
 
     const data: Parameters<typeof prisma.card.update>[0]['data'] = {};
     if (parsed.data.title !== undefined) data.title = parsed.data.title;
@@ -435,6 +437,7 @@ export async function boardsRoutes(app: FastifyInstance) {
       coverUrl: card.coverAttachmentId ? `/api/attachments/${card.coverAttachmentId}` : null,
       completedAt: card.completedAt ? card.completedAt.toISOString() : null,
       completedById: card.completedById,
+      createdById: card.createdById,
       labelIds: card.labels.map((l) => l.labelId),
       memberIds: card.members.map((m) => m.userId),
       checklist: card.checklist.map((k) => ({ id: k.id, text: k.text, done: k.done, position: k.position })),
@@ -925,7 +928,14 @@ export async function boardsRoutes(app: FastifyInstance) {
     if (!card) return reply.code(404).send({ error: 'not_found', message: 'Card not found' });
     await loadMembership(request, reply, card.list.board.workspaceId);
     if (reply.sent) return;
-    if (!canEditBoard(request.membership!, card.list.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit' });
+    if (!canEditCard(request.membership!, card, card.list.board)) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Only the card creator (or a manager) can delete this card' });
+    }
+    await logActivity({
+      boardId: card.list.boardId, actorId: request.userId!,
+      verb: 'card_deleted', targetType: 'card', targetId: card.id,
+      meta: { cardTitle: card.title },
+    });
     await prisma.card.delete({ where: { id: card.id } });
     emitBoardEvent(card.list.boardId, 'card:deleted', { id: card.id }, actorSocketId(request));
     return reply.code(204).send();

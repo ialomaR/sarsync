@@ -3,7 +3,7 @@ import { prisma } from '../db.js';
 // Append-only activity log per board.
 
 export type Verb =
-  | 'card_created' | 'card_moved' | 'card_renamed' | 'card_archived'
+  | 'card_created' | 'card_moved' | 'card_renamed' | 'card_archived' | 'card_deleted'
   | 'card_described' | 'card_due_set' | 'card_due_cleared'
   | 'member_assigned' | 'member_unassigned'
   | 'label_added' | 'label_removed'

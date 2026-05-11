@@ -107,6 +107,29 @@ export function canEditBoard(
   return false;
 }
 
+// Card-level edit: title, description, due date, cover, delete. Tighter than
+// canEditBoard because card metadata is "owned" by its creator. The rules:
+//   - admin: any card
+//   - dept_manager: any card on a board in their department
+//   - team_lead / member: only cards they created themselves
+//   - guest: never
+// Collaborative actions on a card (checklist toggles, comments, member
+// assignment, attachments) continue to use canEditBoard — those are part of
+// working *on* a card, not changing its identity.
+export function canEditCard(
+  membership: { userId: string; role: Role; departmentId: string | null },
+  card: { createdById: string | null },
+  board: { departmentId: string | null },
+): boolean {
+  if (membership.role === Role.admin) return true;
+  if (membership.role === Role.guest) return false;
+  if (card.createdById && card.createdById === membership.userId) return true;
+  if (membership.role === Role.dept_manager
+      && board.departmentId
+      && board.departmentId === membership.departmentId) return true;
+  return false;
+}
+
 // Board-level management: rename, archive, change dept/team assignment.
 // Reserved for users responsible for the board's home org. Cross-dept
 // assignees do NOT inherit manage access — their seniority elsewhere

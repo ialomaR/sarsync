@@ -18,8 +18,9 @@ import { BoardDataProvider, useBoardData } from '../state/BoardDataContext.jsx';
 import { formatDueDate } from '../lib/normalize.js';
 import { useAuth } from '../state/AuthContext.jsx';
 import { Popover, PopoverHeader } from '../ui/Popover.jsx';
+import { canEditCard } from '../state/permissions.js';
 
-export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId, canEdit = true, onCardChanged, onRefetchBoard }) {
+export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId, canEdit = true, membership, boardDepartmentId, onCardChanged, onRefetchBoard }) {
   const auth = useAuth();
   const [state, setState] = React.useState({ status: 'loading', card: null, error: null });
   const [editingDesc, setEditingDesc] = React.useState(false);
@@ -462,7 +463,12 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
             {rtl ? 'فشل تحميل البطاقة' : 'Failed to load card'} — {state.error?.message}
           </div>
         )}
-        {state.status === 'ready' && c && (
+        {state.status === 'ready' && c && (() => {
+          // Stricter than canEdit: only the creator, dept manager, or admin
+          // can change the card's identity (title, description, due, cover,
+          // delete). Collaborative actions stay on the looser canEdit.
+          const canEditOwn = canEdit && canEditCard(membership, c, { departmentId: boardDepartmentId });
+          return (
           <BoardDataProvider peopleById={c.peopleById} labelsById={c.labelsById}>
             {(c.coverUrl || c.coverHue != null) && (
               <CoverPlaceholder url={c.coverUrl} hue={c.coverHue} label={c.coverLabel || ''} height={140} />
@@ -526,7 +532,7 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 180px', gap: 28, marginTop: 24 }}>
                 <div style={{ minWidth: 0 }}>
                   <Section icon="paper" title={rtl ? 'الوصف' : 'Description'} theme={theme}
-                    trailing={canEdit && !editingDesc && (
+                    trailing={canEditOwn && !editingDesc && (
                       <button onClick={() => { setDesc(c.description || ''); setEditingDesc(true); }} style={{
                         background: theme.surface2, border: `.5px solid ${theme.border}`,
                         color: theme.text, padding: '3px 10px', borderRadius: 5,
@@ -570,12 +576,12 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                     cardId={cardId}
                     userDeptId={auth.user?.memberships?.find((mm) => mm.workspaceId === workspaceId)?.departmentId || null}
                     onUpload={canEdit ? uploadAttachment : null}
+                    onSetCover={canEditOwn ? setCover : null}
                     onAttachedFromMedia={canEdit ? ((att) => {
                       setState((s) => ({ ...s, card: { ...s.card, attachments: [...s.card.attachments, att] } }));
                     }) : null}
                     onDelete={canEdit ? deleteAttachment : null}
-                    onRename={canEdit ? renameAttachment : null}
-                    onSetCover={canEdit ? setCover : null} />
+                    onRename={canEdit ? renameAttachment : null} />
 
                   {(c.checklist.length > 0 || canEdit) && (
                     <ChecklistSection theme={theme} rtl={rtl} items={c.checklist}
@@ -675,26 +681,29 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                           }));
                           onRefetchBoard?.();
                         }} />
-                      <DueDateButton theme={theme} rtl={rtl} card={c} onSet={setDue} />
+                      {canEditOwn && <DueDateButton theme={theme} rtl={rtl} card={c} onSet={setDue} />}
                       <div style={{
                         fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
                         color: theme.mutedDim, textTransform: 'uppercase', marginBottom: 4, marginTop: 14,
                       }}>{rtl ? 'إجراءات' : 'Actions'}</div>
                       <MoveCardButton theme={theme} rtl={rtl} card={c} lists={allLists} onMove={moveToList} />
-                      <button onClick={archiveCard} style={{
-                        background: theme.surface2, color: '#DC2626',
-                        border: `.5px solid ${theme.border}`, padding: '7px 10px',
-                        borderRadius: 6, fontSize: 12.5, fontWeight: 500,
-                        cursor: 'pointer', textAlign: 'start',
-                        fontFamily: 'inherit',
-                      }}>{rtl ? 'حذف البطاقة' : 'Delete card'}</button>
+                      {canEditOwn && (
+                        <button onClick={archiveCard} style={{
+                          background: theme.surface2, color: '#DC2626',
+                          border: `.5px solid ${theme.border}`, padding: '7px 10px',
+                          borderRadius: 6, fontSize: 12.5, fontWeight: 500,
+                          cursor: 'pointer', textAlign: 'start',
+                          fontFamily: 'inherit',
+                        }}>{rtl ? 'حذف البطاقة' : 'Delete card'}</button>
+                      )}
                     </>
                   )}
                 </div>
               </div>
             </div>
           </BoardDataProvider>
-        )}
+          );
+        })()}
       </div>
     </div>
   );
@@ -1690,6 +1699,7 @@ const VERB_LABELS = {
   card_created:        { en: 'created this card',         ar: 'أنشأ البطاقة' },
   card_moved:          { en: 'moved this card',           ar: 'نقل البطاقة' },
   card_renamed:        { en: 'renamed the card',          ar: 'غيّر اسم البطاقة' },
+  card_deleted:        { en: 'deleted the card',          ar: 'حذف البطاقة' },
   card_described:      { en: 'updated the description',   ar: 'حدّث الوصف' },
   card_due_set:        { en: 'set a due date',            ar: 'حدّد تاريخ الاستحقاق' },
   card_due_cleared:    { en: 'cleared the due date',      ar: 'مسح تاريخ الاستحقاق' },
