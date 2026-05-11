@@ -54,6 +54,11 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
           transform: hover && theme.cardLift && !isDragging ? 'translateY(-1px)' : 'none',
           transition: 'transform .12s, background .12s, opacity .12s',
           border: theme.name === 'dark' ? `.5px solid ${theme.border}` : 'none',
+          // Lock natural height. The parent list is a flex column with
+          // overflowY:auto — without flexShrink:0, the browser compresses
+          // each card to fit the viewport and the title under the cover
+          // gets squeezed out as the list fills up.
+          flexShrink: 0,
         }}
       >
         {card.cover && (
