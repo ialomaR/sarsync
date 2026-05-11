@@ -8,6 +8,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { api, getAccessToken } from '../lib/api.js';
 import { normalizeBoardSummary } from '../lib/normalize.js';
 import { activeMembership, canCreateBoard } from '../state/permissions.js';
+import { localizedName } from '../lib/i18n.js';
 
 // Append access token so <img> requests can authenticate without an
 // Authorization header (browsers don't send custom headers on image loads).
@@ -124,29 +125,13 @@ function BoardsHomeContent() {
       )}
 
       {state.boards.length > 0 && (
-        <>
-          <SectionHeader theme={theme}>{rtl ? 'كل اللوحات' : 'All boards'}</SectionHeader>
-          <Grid>
-            {state.boards.map((b) => (
-              <BoardCard key={b.id} board={b} theme={theme} rtl={rtl} onOpen={onOpen} />
-            ))}
-            {canCreate && (
-              <button onClick={() => setShowCreate(true)} style={{
-                background: theme.name === 'dark' ? 'rgba(255,255,255,.04)' : 'rgba(0,0,0,.03)',
-                border: `.5px dashed ${theme.border}`,
-                borderRadius: theme.radius,
-                minHeight: 110,
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                gap: 6, color: theme.muted, cursor: 'pointer', fontFamily: 'inherit',
-              }}>
-                <Icon.plus size={18} />
-                <span style={{ fontSize: 12.5, fontWeight: 500 }}>
-                  {rtl ? 'إنشاء لوحة' : 'Create new board'}
-                </span>
-              </button>
-            )}
-          </Grid>
-        </>
+        <DepartmentGroups
+          boards={state.boards}
+          theme={theme} rtl={rtl}
+          onOpen={onOpen}
+          canCreate={canCreate}
+          onCreate={() => setShowCreate(true)}
+        />
       )}
 
       {showCreate && (
@@ -329,6 +314,136 @@ function Grid({ children }) {
       display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
       gap: 12, marginBottom: 24,
     }}>{children}</div>
+  );
+}
+
+// Boards grouped under collapsible department headers — mirrors the sidebar
+// pattern so users have a consistent mental model across the app. Expanded
+// state persists in localStorage. Boards without a department fall under
+// "General" at the bottom.
+function DepartmentGroups({ boards, theme, rtl, onOpen, canCreate, onCreate }) {
+  const groups = React.useMemo(() => {
+    const byDept = new Map();
+    for (const b of boards) {
+      const key = b.departmentId || '__general__';
+      if (!byDept.has(key)) {
+        byDept.set(key, {
+          id: key,
+          name: b.departmentName,
+          nameAr: b.departmentNameAr,
+          hue: b.departmentHue,
+          boards: [],
+        });
+      }
+      byDept.get(key).boards.push(b);
+    }
+    const arr = [...byDept.values()];
+    arr.sort((a, b) => {
+      if (a.id === '__general__') return 1;
+      if (b.id === '__general__') return -1;
+      return localizedName(a, rtl).localeCompare(localizedName(b, rtl));
+    });
+    return arr;
+  }, [boards, rtl]);
+
+  const [expanded, setExpanded] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem('sarsync:boardsHome:expandedDepts');
+      // Default to all expanded if nothing stored; users want to see boards on first visit.
+      return raw ? new Set(JSON.parse(raw)) : null;
+    } catch { return null; }
+  });
+
+  // First-time: expand every group so the user sees everything.
+  React.useEffect(() => {
+    if (expanded === null && groups.length > 0) {
+      setExpanded(new Set(groups.map((g) => g.id)));
+    }
+  }, [groups, expanded]);
+
+  const toggle = (id) => {
+    setExpanded((prev) => {
+      const next = new Set(prev || []);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      try { localStorage.setItem('sarsync:boardsHome:expandedDepts', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+
+  const isOpen = (id) => (expanded === null) ? true : expanded.has(id);
+  const Chevron = Icon.chevron;
+
+  // The "Create new board" tile only renders inside the dept the user belongs
+  // to — or under General if they have no dept. Admins see it under General
+  // since they have no single home dept.
+  const createTileGroupId = '__general__';
+
+  return (
+    <>
+      {groups.map((g) => {
+        const open = isOpen(g.id);
+        const label = g.id === '__general__'
+          ? (rtl ? 'عام' : 'General')
+          : localizedName(g, rtl);
+        const swatch = g.id === '__general__'
+          ? { background: theme.border, color: theme.muted }
+          : { background: `oklch(.78 .12 ${g.hue})`, color: `oklch(.32 .14 ${g.hue})` };
+        return (
+          <div key={g.id} style={{ marginBottom: 16 }}>
+            <button onClick={() => toggle(g.id)} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              width: '100%', background: 'transparent', border: 'none',
+              padding: '8px 4px', cursor: 'pointer',
+              color: theme.text, fontFamily: 'inherit',
+              textAlign: rtl ? 'right' : 'left',
+              marginBottom: open ? 8 : 0,
+            }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: 5,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, fontWeight: 700, flexShrink: 0,
+                ...swatch,
+              }}>{(label?.[0] || '·').toUpperCase()}</span>
+              <span style={{
+                fontSize: 13, fontWeight: 700, letterSpacing: '.04em',
+                color: theme.text, textTransform: 'uppercase', flex: 1,
+              }}>{label}</span>
+              <span style={{ fontSize: 12, color: theme.muted, fontVariantNumeric: 'tabular-nums' }}>
+                {g.boards.length}
+              </span>
+              <span style={{
+                color: theme.muted, display: 'inline-flex',
+                transform: rtl ? 'scaleX(-1)' : 'none',
+              }}>
+                <Chevron size={12} open={open} />
+              </span>
+            </button>
+            {open && (
+              <Grid>
+                {g.boards.map((b) => (
+                  <BoardCard key={b.id} board={b} theme={theme} rtl={rtl} onOpen={onOpen} />
+                ))}
+                {canCreate && g.id === createTileGroupId && (
+                  <button onClick={onCreate} style={{
+                    background: theme.name === 'dark' ? 'rgba(255,255,255,.04)' : 'rgba(0,0,0,.03)',
+                    border: `.5px dashed ${theme.border}`,
+                    borderRadius: theme.radius,
+                    minHeight: 110,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: 6, color: theme.muted, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>
+                    <Icon.plus size={18} />
+                    <span style={{ fontSize: 12.5, fontWeight: 500 }}>
+                      {rtl ? 'إنشاء لوحة' : 'Create new board'}
+                    </span>
+                  </button>
+                )}
+              </Grid>
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }
 

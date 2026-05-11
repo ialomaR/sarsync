@@ -78,5 +78,9 @@ export function normalizeBoardSummary(b) {
     cards: b.cardCount || 0,
     updated: formatRelative(b.updatedAt),
     team: b.subtitle || '',
+    departmentId: b.departmentId || null,
+    departmentName: b.departmentName || null,
+    departmentNameAr: b.departmentNameAr || null,
+    departmentHue: b.departmentHue ?? null,
   };
 }
