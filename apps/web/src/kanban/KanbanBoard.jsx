@@ -6,6 +6,7 @@ import { AvatarStack } from '../ui/Avatar.jsx';
 import { useBoardData } from '../state/BoardDataContext.jsx';
 import { iconBtn, pillBtn } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
+import { DragCtx } from '../state/board-state.jsx';
 
 export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange }) {
   const ctx = useBoardData();
@@ -257,6 +258,27 @@ function NewCardForm({ theme, rtl, lists, onSubmit, onCancel }) {
   );
 }
 
+// Thin invisible target between lists during a list drag — collapses to
+// zero width when no drag is active so layout stays the same. The visible
+// indicator only appears when the cursor hovers *this* slot.
+function ListDropSlot({ index, active, dnd, theme }) {
+  if (!active) return null;
+  const isHere = dnd?.over?.kind === 'list' && dnd.over.toIndex === index;
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); dnd?.enterListSlot(index); }}
+      onDragEnter={(e) => { e.preventDefault(); dnd?.enterListSlot(index); }}
+      style={{
+        width: isHere ? 14 : 8, flexShrink: 0,
+        alignSelf: 'stretch',
+        background: isHere ? theme.accent : 'transparent',
+        borderRadius: 4,
+        opacity: isHere ? 0.85 : 0.2,
+        transition: 'width .12s, opacity .12s, background .12s',
+      }} />
+  );
+}
+
 function MenuItem({ theme, onClick, danger, children }) {
   return (
     <button onClick={onClick} style={{
@@ -276,6 +298,8 @@ function MenuItem({ theme, onClick, danger, children }) {
 export function KanbanBoard({ theme, lists, density, showAvatars, rtl, canEdit, onCardClick, onAddCard, onAddList, onRenameList, onDeleteList }) {
   const [adding, setAdding] = React.useState(false);
   const [text, setText] = React.useState('');
+  const dnd = React.useContext(DragCtx);
+  const isListDragging = dnd?.drag?.kind === 'list';
 
   const submit = async () => {
     const t = text.trim();
@@ -297,13 +321,17 @@ export function KanbanBoard({ theme, lists, density, showAvatars, rtl, canEdit, 
       overflowX: 'auto', overflowY: 'hidden',
       direction: rtl ? 'rtl' : 'ltr',
     }}>
-      {lists.map((list) => (
-        <List key={list.id} list={list} theme={theme}
-          density={density} showAvatars={showAvatars}
-          canEdit={canEdit}
-          onCardClick={onCardClick} onAddCard={onAddCard}
-          onRename={onRenameList} onDelete={onDeleteList} rtl={rtl} />
+      {lists.map((list, i) => (
+        <React.Fragment key={list.id}>
+          <ListDropSlot index={i} active={isListDragging} dnd={dnd} theme={theme} />
+          <List list={list} index={i} theme={theme}
+            density={density} showAvatars={showAvatars}
+            canEdit={canEdit}
+            onCardClick={onCardClick} onAddCard={onAddCard}
+            onRename={onRenameList} onDelete={onDeleteList} rtl={rtl} />
+        </React.Fragment>
       ))}
+      <ListDropSlot index={lists.length} active={isListDragging} dnd={dnd} theme={theme} />
       {!canEdit ? null : adding ? (
         <div style={{
           flexShrink: 0, width: 290,

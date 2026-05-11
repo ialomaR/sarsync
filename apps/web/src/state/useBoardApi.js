@@ -140,6 +140,16 @@ export function useBoardApi(boardId) {
       } else if (evt.kind === 'list:updated') {
         const { id, title } = evt.payload;
         setState((s) => ({ ...s, lists: s.lists.map((l) => l.id === id ? { ...l, title } : l) }));
+      } else if (evt.kind === 'list:moved') {
+        // Another viewer reordered a list. We don't get the destination
+        // index — only the new fractional position — so re-sort the local
+        // lists by position to match the server.
+        const { id, position } = evt.payload;
+        setState((s) => {
+          const lists = s.lists.map((l) => l.id === id ? { ...l, position } : l);
+          lists.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+          return { ...s, lists };
+        });
       } else if (evt.kind === 'list:deleted') {
         const { id } = evt.payload;
         setState((s) => ({ ...s, lists: s.lists.filter((l) => l.id !== id) }));
@@ -219,6 +229,28 @@ export function useBoardApi(boardId) {
       });
     } catch (err) {
       // Revert on failure
+      setState((s) => ({ ...s, lists: prevSnapshot }));
+      throw err;
+    }
+  }, []);
+
+  const moveList = React.useCallback(async (listId, toIndex) => {
+    let prevSnapshot;
+    setState((s) => {
+      prevSnapshot = s.lists;
+      const without = s.lists.filter((l) => l.id !== listId);
+      const moving = s.lists.find((l) => l.id === listId);
+      if (!moving) return s;
+      const idx = Math.max(0, Math.min(toIndex, without.length));
+      const next = [...without.slice(0, idx), moving, ...without.slice(idx)];
+      return { ...s, lists: next };
+    });
+    try {
+      await api(`/lists/${listId}/move`, {
+        method: 'PATCH',
+        body: { toIndex },
+      });
+    } catch (err) {
       setState((s) => ({ ...s, lists: prevSnapshot }));
       throw err;
     }
@@ -361,7 +393,7 @@ export function useBoardApi(boardId) {
     lists: state.lists,
     peopleById: state.peopleById,
     labelsById: state.labelsById,
-    moveCard, addCard, addList, findCard, patchLocalCard, refetch,
+    moveCard, moveList, addCard, addList, findCard, patchLocalCard, refetch,
     renameList, deleteList,
     updateBoard, archiveBoard, deleteBoard, toggleStar,
     uploadCover, removeCover,

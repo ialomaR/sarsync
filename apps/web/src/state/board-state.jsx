@@ -51,23 +51,42 @@ export function useBoardState(initial) {
 
 function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
 
-// Drag & drop manager
+// Drag & drop manager — handles card moves AND list reordering.
+//
+// Two independent flows share the same context to keep callsites simple:
+//   - Card drag: starts from a card surface, drops on a card or list end.
+//   - List drag: starts from a list header, drops on another list slot.
+// Each flow uses its own keys in `drag` / `over` so they never collide.
 export const DragCtx = React.createContext(null);
 
-export function DragProvider({ children, onMove }) {
+export function DragProvider({ children, onMove, onMoveList }) {
   const [drag, setDrag] = React.useState(null);
   const [over, setOver] = React.useState(null);
 
   const api = React.useMemo(() => ({
     drag, over,
-    start: (cardId, fromListId) => setDrag({ cardId, fromListId }),
+    // Card flow
+    start: (cardId, fromListId) => setDrag({ kind: 'card', cardId, fromListId }),
+    enterCard: (listId, index) => setOver({ kind: 'card', listId, index }),
+    enterListEnd: (listId, count) => setOver({ kind: 'card', listId, index: count }),
+    // List flow
+    startList: (listId, fromIndex) => setDrag({ kind: 'list', listId, fromIndex }),
+    enterListSlot: (toIndex) => setOver({ kind: 'list', toIndex }),
+    // Shared end — fires the right callback based on what was being dragged.
     end: () => {
-      if (drag && over) onMove(drag.cardId, over.listId, over.index);
+      if (drag?.kind === 'card' && over?.kind === 'card') {
+        onMove?.(drag.cardId, over.listId, over.index);
+      } else if (drag?.kind === 'list' && over?.kind === 'list') {
+        if (over.toIndex !== drag.fromIndex && over.toIndex !== drag.fromIndex + 1) {
+          // toIndex is the destination among the OTHER lists. If we drop just
+          // past our own slot it's a no-op visually, so skip it.
+          const adjusted = over.toIndex > drag.fromIndex ? over.toIndex - 1 : over.toIndex;
+          onMoveList?.(drag.listId, adjusted);
+        }
+      }
       setDrag(null); setOver(null);
     },
-    enterCard: (listId, index) => setOver({ listId, index }),
-    enterListEnd: (listId, count) => setOver({ listId, index: count }),
-  }), [drag, over, onMove]);
+  }), [drag, over, onMove, onMoveList]);
 
   return <DragCtx.Provider value={api}>{children}</DragCtx.Provider>;
 }

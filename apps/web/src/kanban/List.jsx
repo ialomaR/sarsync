@@ -5,7 +5,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { iconBtn, LIST_HUES } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
 
-export function List({ list, theme, density, showAvatars, canEdit, onCardClick, onAddCard, onRename, onDelete, rtl }) {
+export function List({ list, index, theme, density, showAvatars, canEdit, onCardClick, onAddCard, onRename, onDelete, rtl }) {
   const [adding, setAdding] = React.useState(false);
   const [text, setText] = React.useState('');
   const [renaming, setRenaming] = React.useState(false);
@@ -14,8 +14,13 @@ export function List({ list, theme, density, showAvatars, canEdit, onCardClick, 
   const moreRef = React.useRef(null);
   const dnd = React.useContext(DragCtx);
   const hue = LIST_HUES[list.id] || 220;
-  const dragOverEnd = dnd && dnd.over && dnd.over.listId === list.id && dnd.over.index === list.cards.length;
-  const isDragActive = dnd && dnd.drag;
+  // Limit drop-zone state to the active drag kind so a list-drag doesn't
+  // light up card slots (and vice versa).
+  const isCardDragging = dnd?.drag?.kind === 'card';
+  const isListDragging = dnd?.drag?.kind === 'list';
+  const isSelfListDragging = isListDragging && dnd.drag.listId === list.id;
+  const dragOverEnd = isCardDragging && dnd.over?.kind === 'card'
+    && dnd.over.listId === list.id && dnd.over.index === list.cards.length;
   const submit = () => { if (text.trim()) { onAddCard && onAddCard(list.id, text.trim()); } setText(''); setAdding(false); };
 
   React.useEffect(() => { setName(list.title); }, [list.title]);
@@ -34,21 +39,35 @@ export function List({ list, theme, density, showAvatars, canEdit, onCardClick, 
   };
 
   return (
-    <div style={{
-      width: 290,
-      flexShrink: 0,
-      background: theme.list,
-      borderRadius: theme.radius,
-      boxShadow: theme.shadow,
-      display: 'flex', flexDirection: 'column',
-      maxHeight: '100%',
-      overflow: 'hidden',
-      borderTop: theme.listAccent ? `3px solid oklch(0.7 0.16 ${hue})` : 'none',
-    }}>
+    <div
+      draggable={canEdit && !renaming && !adding}
+      onDragStart={(e) => {
+        if (!canEdit) { e.preventDefault(); return; }
+        // Don't hijack a card drag if the user happens to click inside the
+        // list body. The header has its own dataTransfer payload.
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', 'list:' + list.id);
+        dnd?.startList(list.id, index);
+      }}
+      onDragEnd={() => dnd?.end()}
+      style={{
+        width: 290,
+        flexShrink: 0,
+        background: theme.list,
+        borderRadius: theme.radius,
+        boxShadow: theme.shadow,
+        display: 'flex', flexDirection: 'column',
+        maxHeight: '100%',
+        overflow: 'hidden',
+        borderTop: theme.listAccent ? `3px solid oklch(0.7 0.16 ${hue})` : 'none',
+        opacity: isSelfListDragging ? 0.35 : 1,
+        transition: 'opacity .12s',
+      }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 12px 8px',
         background: theme.listHd,
+        cursor: canEdit ? 'grab' : 'default',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
           {theme.listAccent && (
@@ -109,13 +128,13 @@ export function List({ list, theme, density, showAvatars, canEdit, onCardClick, 
 
       <div
         onDragOver={(e) => {
-          if (isDragActive) {
+          if (isCardDragging) {
             e.preventDefault();
             if (!dnd.over || dnd.over.listId !== list.id) dnd.enterListEnd(list.id, list.cards.length);
           }
         }}
         onDragEnter={(e) => {
-          if (isDragActive && list.cards.length === 0) {
+          if (isCardDragging && list.cards.length === 0) {
             e.preventDefault();
             dnd.enterListEnd(list.id, 0);
           }
@@ -124,7 +143,7 @@ export function List({ list, theme, density, showAvatars, canEdit, onCardClick, 
           padding: '2px 8px 8px',
           display: 'flex', flexDirection: 'column', gap: 8,
           overflowY: 'auto', minHeight: 0, flex: 1,
-          background: isDragActive ? (theme.name === 'dark' ? 'rgba(255,255,255,.02)' : 'rgba(0,0,0,.015)') : 'transparent',
+          background: isCardDragging ? (theme.name === 'dark' ? 'rgba(255,255,255,.02)' : 'rgba(0,0,0,.015)') : 'transparent',
           transition: 'background .12s',
         }}>
         {list.cards.map((c, i) => (

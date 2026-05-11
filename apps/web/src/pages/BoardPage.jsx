@@ -74,7 +74,9 @@ export function BoardPage() {
               onAddCard={canEdit ? board.addCard : null}
               filterText={filterText}
               onFilterChange={setFilterText} />
-            <DragProvider onMove={canEdit ? board.moveCard : () => {}}>
+            <DragProvider
+              onMove={canEdit ? board.moveCard : () => {}}
+              onMoveList={canEdit ? board.moveList : () => {}}>
               <KanbanBoard theme={theme} lists={visibleLists} density={s.density}
                 showAvatars={s.showAvatars} rtl={s.rtl}
                 canEdit={canEdit}
