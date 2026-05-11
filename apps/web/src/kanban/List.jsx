@@ -40,16 +40,6 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
 
   return (
     <div
-      draggable={canEdit && !renaming && !adding}
-      onDragStart={(e) => {
-        if (!canEdit) { e.preventDefault(); return; }
-        // Don't hijack a card drag if the user happens to click inside the
-        // list body. The header has its own dataTransfer payload.
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', 'list:' + list.id);
-        dnd?.startList(list.id, index);
-      }}
-      onDragEnd={() => dnd?.end()}
       style={{
         width: 290,
         flexShrink: 0,
@@ -67,9 +57,26 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 12px 8px',
         background: theme.listHd,
-        cursor: canEdit ? 'grab' : 'default',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+          {canEdit && (
+            <span
+              draggable
+              onDragStart={(e) => {
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', 'list:' + list.id);
+                dnd?.startList(list.id, index);
+              }}
+              onDragEnd={() => dnd?.end()}
+              title={rtl ? 'اسحب لإعادة الترتيب' : 'Drag to reorder'}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 14, height: 18, flexShrink: 0,
+                cursor: 'grab', color: theme.mutedDim,
+                fontSize: 14, lineHeight: 1, userSelect: 'none',
+              }}>⋮⋮</span>
+          )}
           {theme.listAccent && (
             <span style={{
               width: 8, height: 8, borderRadius: '50%',
