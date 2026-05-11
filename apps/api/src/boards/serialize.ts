@@ -24,6 +24,7 @@ interface RawBoard {
   subtitle: string | null;
   hue: number;
   coverImagePath: string | null;
+  archivedAt: Date | null;
   workspaceId: string;
   departmentId: string | null;
   teamId: string | null;
@@ -61,6 +62,7 @@ export function serializeBoard(
     subtitle: board.subtitle,
     hue: board.hue,
     coverUrl: board.coverImagePath ? `/api/boards/${board.id}/cover` : null,
+    archivedAt: board.archivedAt ? board.archivedAt.toISOString() : null,
     starred: viewer.starred,
     workspaceId: board.workspaceId,
     departmentId: board.departmentId,

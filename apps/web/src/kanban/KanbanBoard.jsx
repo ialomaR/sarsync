@@ -8,7 +8,7 @@ import { iconBtn, pillBtn } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
 import { DragCtx } from '../state/board-state.jsx';
 
-export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange }) {
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange }) {
   const ctx = useBoardData();
   const navigate = useNavigate();
   const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
@@ -55,6 +55,11 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
     try {
       await onArchiveBoard?.();
       navigate('/boards');
+    } catch (err) { alert(err.message); }
+  };
+  const onRestore = async () => {
+    try {
+      await onRestoreBoard?.();
     } catch (err) { alert(err.message); }
   };
   const onDelete = async () => {
@@ -186,9 +191,15 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
             </MenuItem>
           )}
           {canManage && (
-            <MenuItem theme={theme} onClick={() => { setMenuOpen(false); onArchive(); }}>
-              {rtl ? 'أرشفة' : 'Archive board'}
-            </MenuItem>
+            board.archivedAt ? (
+              <MenuItem theme={theme} onClick={() => { setMenuOpen(false); onRestore(); }}>
+                {rtl ? 'استعادة من الأرشيف' : 'Restore from archive'}
+              </MenuItem>
+            ) : (
+              <MenuItem theme={theme} onClick={() => { setMenuOpen(false); onArchive(); }}>
+                {rtl ? 'أرشفة' : 'Archive board'}
+              </MenuItem>
+            )
           )}
           {canDelete && (
             <MenuItem theme={theme} danger onClick={() => { setMenuOpen(false); onDelete(); }}>

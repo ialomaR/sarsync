@@ -56,6 +56,7 @@ export function normalizeBoard(b) {
     subtitle: b.subtitle,
     hue: b.hue,
     coverUrl: b.coverUrl || null,
+    archivedAt: b.archivedAt || null,
     starred: b.starred,
     workspaceId: b.workspaceId,
     departmentId: b.departmentId,

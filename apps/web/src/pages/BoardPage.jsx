@@ -67,6 +67,7 @@ export function BoardPage() {
               onUpdateBoard={canManage ? board.updateBoard : null}
               onToggleStar={board.toggleStar}
               onArchiveBoard={canManage ? board.archiveBoard : null}
+              onRestoreBoard={canManage ? board.restoreBoard : null}
               onDeleteBoard={canDelete ? board.deleteBoard : null}
               onUploadCover={canManage ? board.uploadCover : null}
               onRemoveCover={canManage ? board.removeCover : null}

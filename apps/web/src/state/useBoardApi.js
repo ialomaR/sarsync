@@ -354,6 +354,13 @@ export function useBoardApi(boardId) {
   const archiveBoard = React.useCallback(async () => {
     if (!state.board) return;
     await api(`/boards/${state.board.id}/archive`, { method: 'POST' });
+    setState((s) => ({ ...s, board: { ...s.board, archivedAt: new Date().toISOString() } }));
+  }, [state.board]);
+
+  const restoreBoard = React.useCallback(async () => {
+    if (!state.board) return;
+    await api(`/boards/${state.board.id}/archive`, { method: 'DELETE' });
+    setState((s) => ({ ...s, board: { ...s.board, archivedAt: null } }));
   }, [state.board]);
 
   const deleteBoard = React.useCallback(async () => {
@@ -395,7 +402,7 @@ export function useBoardApi(boardId) {
     labelsById: state.labelsById,
     moveCard, moveList, addCard, addList, findCard, patchLocalCard, refetch,
     renameList, deleteList,
-    updateBoard, archiveBoard, deleteBoard, toggleStar,
+    updateBoard, archiveBoard, restoreBoard, deleteBoard, toggleStar,
     uploadCover, removeCover,
   };
 }
