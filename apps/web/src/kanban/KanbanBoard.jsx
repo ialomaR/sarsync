@@ -269,9 +269,11 @@ function NewCardForm({ theme, rtl, lists, onSubmit, onCancel }) {
   );
 }
 
-// Thin invisible target between lists during a list drag — collapses to
-// zero width when no drag is active so layout stays the same. The visible
-// indicator only appears when the cursor hovers *this* slot.
+// Drop target between lists during a list drag. Collapses to zero when
+// no drag is active so layout never shifts at rest. When a list is being
+// dragged, every slot widens enough to be a forgiving target; the hovered
+// slot expands further into a clear placeholder showing exactly where the
+// list will land.
 function ListDropSlot({ index, active, dnd, theme }) {
   if (!active) return null;
   const isHere = dnd?.over?.kind === 'list' && dnd.over.toIndex === index;
@@ -280,12 +282,14 @@ function ListDropSlot({ index, active, dnd, theme }) {
       onDragOver={(e) => { e.preventDefault(); dnd?.enterListSlot(index); }}
       onDragEnter={(e) => { e.preventDefault(); dnd?.enterListSlot(index); }}
       style={{
-        width: isHere ? 14 : 8, flexShrink: 0,
+        width: isHere ? 80 : 18, flexShrink: 0,
         alignSelf: 'stretch',
-        background: isHere ? theme.accent : 'transparent',
-        borderRadius: 4,
-        opacity: isHere ? 0.85 : 0.2,
-        transition: 'width .12s, opacity .12s, background .12s',
+        background: isHere
+          ? (theme.name === 'dark' ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.04)')
+          : 'transparent',
+        border: isHere ? `2px dashed ${theme.accent}` : '2px dashed transparent',
+        borderRadius: 8,
+        transition: 'width .14s ease, background .14s, border-color .14s',
       }} />
   );
 }

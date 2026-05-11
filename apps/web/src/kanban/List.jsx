@@ -38,8 +38,12 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
     try { await onDelete?.(list.id); } catch (err) { alert(err.message); }
   };
 
+  const listRef = React.useRef(null);
+  const [handleHover, setHandleHover] = React.useState(false);
+
   return (
     <div
+      ref={listRef}
       style={{
         width: 290,
         flexShrink: 0,
@@ -60,22 +64,40 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
           {canEdit && (
-            <span
+            <div
               draggable
               onDragStart={(e) => {
                 e.stopPropagation();
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('text/plain', 'list:' + list.id);
+                // Use the whole list as the floating drag preview so the
+                // user sees what they're moving instead of a tiny dot icon.
+                if (listRef.current) {
+                  e.dataTransfer.setDragImage(listRef.current, 20, 20);
+                }
                 dnd?.startList(list.id, index);
               }}
               onDragEnd={() => dnd?.end()}
+              onMouseEnter={() => setHandleHover(true)}
+              onMouseLeave={() => setHandleHover(false)}
               title={rtl ? 'اسحب لإعادة الترتيب' : 'Drag to reorder'}
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 14, height: 18, flexShrink: 0,
-                cursor: 'grab', color: theme.mutedDim,
-                fontSize: 14, lineHeight: 1, userSelect: 'none',
-              }}>⋮⋮</span>
+                width: 22, height: 22, flexShrink: 0, borderRadius: 4,
+                cursor: 'grab', color: handleHover ? theme.text : theme.mutedDim,
+                background: handleHover ? (theme.name === 'dark' ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.05)') : 'transparent',
+                transition: 'background .12s, color .12s',
+                userSelect: 'none', touchAction: 'none',
+              }}>
+              <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" style={{ pointerEvents: 'none' }}>
+                <circle cx="2" cy="2" r="1.2" />
+                <circle cx="2" cy="7" r="1.2" />
+                <circle cx="2" cy="12" r="1.2" />
+                <circle cx="8" cy="2" r="1.2" />
+                <circle cx="8" cy="7" r="1.2" />
+                <circle cx="8" cy="12" r="1.2" />
+              </svg>
+            </div>
           )}
           {theme.listAccent && (
             <span style={{
