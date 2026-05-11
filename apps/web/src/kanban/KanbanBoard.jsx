@@ -111,6 +111,22 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
           padding: '3px 8px', borderRadius: 5,
           border: `.5px solid ${theme.border}`,
         }}>{rtl ? 'مرئي للفريق' : 'Team visible'}</span>
+        <span
+          title={board.createdBy
+            ? (rtl ? 'أُنشئت بواسطة هذا العضو' : 'Created by this user')
+            : (rtl ? 'لوحة قديمة قبل تفعيل تتبّع المنشئ' : 'Legacy board — creator wasn\'t recorded')}
+          style={{
+            fontSize: 11, fontWeight: 500,
+            color: theme.muted,
+            background: 'transparent',
+            padding: '3px 8px', borderRadius: 5,
+            border: `.5px dashed ${theme.border}`,
+          }}>
+          {rtl ? 'أُنشئت بواسطة: ' : 'Created by: '}
+          <strong style={{ color: theme.text, fontWeight: 600 }}>
+            {board.createdBy?.name || (rtl ? 'غير معروف' : 'Unknown')}
+          </strong>
+        </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {showAvatars && memberIds.length > 0 && (
