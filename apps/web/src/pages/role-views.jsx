@@ -1212,7 +1212,21 @@ export function DepartmentView({ themeName, accent, rtl, deptId }) {
         <DeptTabs theme={theme} rtl={rtl} tab={tab} setTab={setTab} />
 
         <div style={{ padding: '18px 28px 32px' }}>
-          {tab === 'projects' && <DeptProjectsTab theme={theme} rtl={rtl} dept={dept} navigate={navigate} />}
+          {tab === 'projects' && <DeptProjectsTab theme={theme} rtl={rtl} dept={dept} navigate={navigate}
+            canManage={(() => {
+              const m = auth.memberships[0];
+              if (!m) return false;
+              if (m.role === 'admin') return true;
+              if (m.role === 'dept_manager' && m.departmentId === dept.id) return true;
+              return false;
+            })()}
+            workspaceId={workspaceId}
+            onTeamsChanged={() => {
+              // Refetch the dept detail so the Teams section reflects edits.
+              setState((s) => ({ ...s, status: 'loading' }));
+              api(`/departments/${id}/detail`).then((d) => setState({ status: 'ready', dept: d, error: null }));
+            }}
+          />}
           {tab === 'members' && <DeptMembersTab theme={theme} rtl={rtl} dept={dept} kpis={kpis} />}
           {tab === 'media' && <MediaLibrary theme={theme} rtl={rtl} deptId={dept.id} />}
           {tab === 'chat' && <DeptChat theme={theme} rtl={rtl} deptId={dept.id} />}
@@ -1254,7 +1268,16 @@ function DeptTabs({ theme, rtl, tab, setTab }) {
   );
 }
 
-function DeptProjectsTab({ theme, rtl, dept, navigate }) {
+function DeptProjectsTab({ theme, rtl, dept, navigate, canManage, workspaceId, onTeamsChanged }) {
+  const [editingTeam, setEditingTeam] = React.useState(null); // team object or 'new'
+
+  const deleteTeam = async (team) => {
+    if (!confirm(rtl ? `حذف الفريق "${team.name}"؟` : `Delete team "${team.name}"?`)) return;
+    try {
+      await api(`/teams/${team.id}`, { method: 'DELETE' });
+      onTeamsChanged?.();
+    } catch (err) { alert(err.message); }
+  };
   return (
     <>
       <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.text, margin: '0 0 10px' }}>{rtl ? 'مشاريع القسم' : 'Department boards'}</h2>
@@ -1281,31 +1304,129 @@ function DeptProjectsTab({ theme, rtl, dept, navigate }) {
         ))}
       </div>
 
-      {dept.teams.length > 0 && (
+      {(dept.teams.length > 0 || canManage) && (
         <div style={{ marginTop: 22 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.text, margin: '0 0 10px' }}>{rtl ? 'الفرق' : 'Teams'}</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-            {dept.teams.map((t) => (
-              <div key={t.id} style={{
-                padding: '12px 14px',
-                background: theme.surface, borderRadius: theme.cardRadius,
-                border: `.5px solid ${theme.border}`,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{localizedName(t, rtl)}</div>
-                  {t.members.length > 0 && (
-                    <AvatarStack ids={t.members.map((m) => m.id)} size={20} ringColor={theme.surface} />
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: theme.muted }}>
-                  {t.memberCount} {rtl ? 'أعضاء' : 'members'} · {t.projectCount} {rtl ? 'مشاريع' : 'boards'}
-                </div>
-              </div>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+            <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.text, margin: 0 }}>{rtl ? 'الفرق' : 'Teams'}</h2>
+            {canManage && (
+              <button onClick={() => setEditingTeam('new')} style={{
+                background: theme.accent, color: theme.accentText, border: 'none',
+                padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>+ {rtl ? 'فريق جديد' : 'New team'}</button>
+            )}
           </div>
+          {dept.teams.length === 0 && canManage && (
+            <div style={{
+              padding: 18, background: theme.surface, borderRadius: theme.cardRadius,
+              border: `.5px dashed ${theme.border}`, fontSize: 12.5, color: theme.muted, textAlign: 'center',
+            }}>{rtl ? 'لا توجد فرق في هذا القسم بعد — أنشئ أول فريق.' : 'No teams in this department yet — create the first one.'}</div>
+          )}
+          {dept.teams.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+              {dept.teams.map((t) => (
+                <div key={t.id} style={{
+                  padding: '12px 14px',
+                  background: theme.surface, borderRadius: theme.cardRadius,
+                  border: `.5px solid ${theme.border}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, gap: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: theme.text, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{localizedName(t, rtl)}</div>
+                    {t.members.length > 0 && (
+                      <AvatarStack ids={t.members.map((m) => m.id)} size={20} ringColor={theme.surface} />
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ fontSize: 11, color: theme.muted }}>
+                      {t.memberCount} {rtl ? 'أعضاء' : 'members'} · {t.projectCount} {rtl ? 'مشاريع' : 'boards'}
+                    </div>
+                    {canManage && (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button onClick={() => setEditingTeam(t)} style={teamMiniBtn(theme)}>{rtl ? 'تعديل' : 'Edit'}</button>
+                        <button onClick={() => deleteTeam(t)} style={{ ...teamMiniBtn(theme), color: '#DC2626' }}>{rtl ? 'حذف' : 'Delete'}</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
+
+      {editingTeam && (
+        <DeptTeamForm theme={theme} rtl={rtl} workspaceId={workspaceId}
+          dept={dept}
+          initial={editingTeam === 'new' ? null : editingTeam}
+          onClose={() => setEditingTeam(null)}
+          onSaved={() => { setEditingTeam(null); onTeamsChanged?.(); }}
+        />
+      )}
     </>
+  );
+}
+
+function teamMiniBtn(theme) {
+  return {
+    background: 'transparent', border: `.5px solid ${theme.border}`,
+    color: theme.text, padding: '3px 9px', borderRadius: 4,
+    fontSize: 11.5, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+  };
+}
+
+function DeptTeamForm({ theme, rtl, workspaceId, dept, initial, onClose, onSaved }) {
+  const [name, setName] = React.useState(initial?.name || '');
+  const [nameAr, setNameAr] = React.useState(initial?.nameAr || '');
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  const submit = async () => {
+    if (!name.trim()) return;
+    setSaving(true); setError(null);
+    try {
+      if (initial) {
+        await api(`/teams/${initial.id}`, {
+          method: 'PATCH',
+          body: { name: name.trim(), nameAr: nameAr.trim() || null },
+        });
+      } else {
+        await api(`/workspaces/${workspaceId}/teams`, {
+          method: 'POST',
+          body: { name: name.trim(), nameAr: nameAr.trim() || null, departmentId: dept.id },
+        });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal theme={theme} onClose={onClose}
+      title={initial ? (rtl ? 'تعديل الفريق' : 'Edit team') : (rtl ? 'فريق جديد' : 'New team')}
+      footer={<>
+        <GhostBtn theme={theme} onClick={onClose}>{rtl ? 'إلغاء' : 'Cancel'}</GhostBtn>
+        <PrimaryBtn theme={theme} onClick={submit} disabled={saving || !name.trim()}>
+          {saving ? '…' : (rtl ? 'حفظ' : 'Save')}
+        </PrimaryBtn>
+      </>}>
+      <div style={{ fontSize: 12, color: theme.muted, marginBottom: 12 }}>
+        {rtl ? `الفريق سيُنشأ ضمن قسم ${localizedName(dept, rtl)}.` : `Team will be created under ${localizedName(dept, rtl)}.`}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field theme={theme} label={rtl ? 'الاسم بالإنجليزية' : 'Name (English)'} hint={rtl ? 'مطلوب' : 'Required'}>
+          <TextInput theme={theme} value={name} onChange={(e) => setName(e.target.value)}
+            placeholder="Mobile Apps" dir="ltr" />
+        </Field>
+        <Field theme={theme} label={rtl ? 'الاسم بالعربية' : 'Name (Arabic)'} hint={rtl ? 'اختياري' : 'Optional'}>
+          <TextInput theme={theme} value={nameAr} onChange={(e) => setNameAr(e.target.value)}
+            placeholder="تطبيقات الجوال" dir="rtl" />
+        </Field>
+      </div>
+      {error && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 8 }}>{error}</div>}
+    </Modal>
   );
 }
 

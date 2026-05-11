@@ -88,6 +88,24 @@ async function requireWorkspaceAdmin(
   return true;
 }
 
+// Admin OR the dept_manager of the target department. Used for actions that
+// fall inside a department's scope (e.g. team management) — admins always
+// pass; dept_managers pass only when the target dept is their own.
+async function requireDeptScope(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  workspaceId: string,
+  departmentId: string,
+) {
+  await loadMembership(request, reply, workspaceId);
+  if (reply.sent) return false;
+  const m = request.membership!;
+  if (m.role === Role.admin) return true;
+  if (m.role === Role.dept_manager && m.departmentId === departmentId) return true;
+  reply.code(403).send({ error: 'forbidden', message: 'Department manager role required for this department' });
+  return false;
+}
+
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 export async function adminRoutes(app: FastifyInstance) {
@@ -380,7 +398,6 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Params: { workspaceId: string }; Body: unknown }>('/workspaces/:workspaceId/teams', async (request, reply) => {
-    if (!await requireWorkspaceAdmin(request, reply, request.params.workspaceId)) return;
     const parsed = CreateTeam.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
 
@@ -389,6 +406,9 @@ export async function adminRoutes(app: FastifyInstance) {
     if (!dept || dept.workspaceId !== request.params.workspaceId) {
       return reply.code(400).send({ error: 'invalid_dept', message: 'Department not in workspace' });
     }
+
+    // Admin OR dept_manager of this specific department.
+    if (!await requireDeptScope(request, reply, request.params.workspaceId, dept.id)) return;
 
     const t = await prisma.team.create({
       data: {
@@ -405,10 +425,19 @@ export async function adminRoutes(app: FastifyInstance) {
   app.patch<{ Params: { id: string }; Body: unknown }>('/teams/:id', async (request, reply) => {
     const team = await prisma.team.findUnique({ where: { id: request.params.id } });
     if (!team) return reply.code(404).send({ error: 'not_found', message: 'Team not found' });
-    if (!await requireWorkspaceAdmin(request, reply, team.workspaceId)) return;
+    if (!await requireDeptScope(request, reply, team.workspaceId, team.departmentId)) return;
 
     const parsed = UpdateTeam.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
+
+    // Dept managers can't reassign a team to a different department — that
+    // would let them move teams out from under another manager. Admins still
+    // can (the schema allows it via UpdateTeam).
+    if (parsed.data.departmentId && parsed.data.departmentId !== team.departmentId) {
+      if (request.membership!.role !== Role.admin) {
+        return reply.code(403).send({ error: 'forbidden', message: 'Only admins can move teams between departments' });
+      }
+    }
 
     const updated = await prisma.team.update({ where: { id: team.id }, data: parsed.data });
     return reply.send({ id: updated.id, name: updated.name, nameAr: updated.nameAr, departmentId: updated.departmentId, leadId: updated.leadId });
@@ -417,7 +446,7 @@ export async function adminRoutes(app: FastifyInstance) {
   app.delete<{ Params: { id: string } }>('/teams/:id', async (request, reply) => {
     const team = await prisma.team.findUnique({ where: { id: request.params.id } });
     if (!team) return reply.code(404).send({ error: 'not_found', message: 'Team not found' });
-    if (!await requireWorkspaceAdmin(request, reply, team.workspaceId)) return;
+    if (!await requireDeptScope(request, reply, team.workspaceId, team.departmentId)) return;
 
     await prisma.team.delete({ where: { id: team.id } });
     return reply.code(204).send();
