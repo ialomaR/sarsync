@@ -274,9 +274,12 @@ function BoardGroups({ boards, currentBoardId, theme, rtl, navigate }) {
           ? { background: theme.border, color: theme.muted }
           : { background: `oklch(.78 .12 ${g.hue})`, color: `oklch(.32 .14 ${g.hue})` };
         const Chevron = Icon.chevron;
+        const tooltip = g.id === '__general__'
+          ? (rtl ? 'لوحات عابرة للأقسام — يُنشئها الأدمن فقط' : 'Cross-functional boards — admin-created only')
+          : undefined;
         return (
           <React.Fragment key={g.id}>
-            <button onClick={() => toggle(g.id)} style={{
+            <button onClick={() => toggle(g.id)} title={tooltip} style={{
               display: 'flex', alignItems: 'center', gap: 9,
               background: 'transparent', color: theme.text,
               border: 'none', padding: '7px 10px', borderRadius: 6,

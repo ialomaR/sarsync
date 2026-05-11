@@ -156,7 +156,10 @@ export async function meRoutes(app: FastifyInstance) {
         workspaceId: { in: memberships.map((m) => m.workspaceId) },
         archivedAt: { not: null },
       },
-      include: { department: { select: { id: true, name: true, nameAr: true, hue: true } } },
+      include: {
+        department: { select: { id: true, name: true, nameAr: true, hue: true } },
+        createdBy: { select: { id: true, firstName: true, lastName: true, avatarColor: true } },
+      },
       orderBy: { archivedAt: 'desc' },
     });
 
@@ -189,6 +192,11 @@ export async function meRoutes(app: FastifyInstance) {
           departmentName: b.department?.name ?? null,
           departmentNameAr: b.department?.nameAr ?? null,
           departmentHue: b.department?.hue ?? null,
+          createdBy: b.createdBy ? {
+            id: b.createdBy.id,
+            name: `${b.createdBy.firstName} ${b.createdBy.lastName}`.trim(),
+            avatarColor: b.createdBy.avatarColor,
+          } : null,
           viewerRole: m.role,
         };
       }),

@@ -57,6 +57,7 @@ model User {
   // Cards & comments authored
   comments      Comment[]
   cardsCreated  Card[]         @relation("card_created_by")
+  boardsCreated Board[]        @relation("board_created_by")
   activityLog   Activity[]
   cardMembers   CardMember[]
   attachments   Attachment[]   @relation("attachment_uploaded_by")
@@ -367,6 +368,9 @@ model Board {
   // don't carry attachments.
   coverImagePath String?
   coverImageMime String?
+  // Who created this board. Nullable so legacy rows from before the column
+  // existed stay valid; set on every new board going forward.
+  createdById   String?
   archivedAt    DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -374,6 +378,7 @@ model Board {
   workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   team       Team?       @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdBy  User?       @relation("board_created_by", fields: [createdById], references: [id], onDelete: SetNull)
   lists      List[]
   activity   Activity[]
   labels     Label[]

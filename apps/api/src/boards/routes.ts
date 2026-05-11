@@ -90,6 +90,7 @@ export async function boardsRoutes(app: FastifyInstance) {
       include: {
         _count: { select: { lists: true } },
         department: { select: { id: true, name: true, nameAr: true, hue: true } },
+        createdBy: { select: { id: true, firstName: true, lastName: true, avatarColor: true } },
       },
     });
 
@@ -144,6 +145,12 @@ export async function boardsRoutes(app: FastifyInstance) {
         departmentHue: b.department?.hue ?? null,
         teamId: b.teamId,
         coverUrl: b.coverImagePath ? `/api/boards/${b.id}/cover` : null,
+        createdById: b.createdById,
+        createdBy: b.createdBy ? {
+          id: b.createdBy.id,
+          name: `${b.createdBy.firstName} ${b.createdBy.lastName}`.trim(),
+          avatarColor: b.createdBy.avatarColor,
+        } : null,
       })),
     });
   });
@@ -153,6 +160,7 @@ export async function boardsRoutes(app: FastifyInstance) {
     const board = await prisma.board.findUnique({
       where: { id: request.params.id },
       include: {
+        createdBy: { select: { id: true, firstName: true, lastName: true, avatarColor: true } },
         lists: {
           where: { archivedAt: null },
           include: {
@@ -591,7 +599,16 @@ export async function boardsRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: 'forbidden', message: 'Cannot create boards in other departments' });
       }
     } else if (m.role === Role.dept_manager || m.role === Role.team_lead) {
-      // Non-admins must scope to their own department; admin may leave it null (workspace-wide).
+      // Non-admins must scope to their own department; admin may leave it null
+      // (workspace-wide / "General"). If a dept_manager / team_lead somehow
+      // has no departmentId on their membership, refuse rather than silently
+      // creating an orphan General board with no owning department.
+      if (!m.departmentId) {
+        return reply.code(400).send({
+          error: 'no_department',
+          message: 'Your membership has no department — ask an admin to assign you to one before creating boards.',
+        });
+      }
       parsed.data.departmentId = m.departmentId;
       // team_lead also scopes to their team by default so boards land where teammates can see them.
       if (m.role === Role.team_lead && !parsed.data.teamId && m.teamId) {
@@ -613,6 +630,7 @@ export async function boardsRoutes(app: FastifyInstance) {
         hue: parsed.data.hue,
         departmentId: parsed.data.departmentId ?? null,
         teamId: parsed.data.teamId ?? null,
+        createdById: m.userId,
         lists: parsed.data.withDefaultLists
           ? { create: DEFAULT_LISTS.map((title, i) => ({ title, position: (i + 1) * 1024 })) }
           : undefined,

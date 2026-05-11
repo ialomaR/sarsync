@@ -388,9 +388,12 @@ function DepartmentGroups({ boards, theme, rtl, onOpen, canCreate, onCreate }) {
         const swatch = g.id === '__general__'
           ? { background: theme.border, color: theme.muted }
           : { background: `oklch(.78 .12 ${g.hue})`, color: `oklch(.32 .14 ${g.hue})` };
+        const tooltip = g.id === '__general__'
+          ? (rtl ? 'لوحات عابرة للأقسام — يُنشئها الأدمن فقط' : 'Cross-functional boards — admin-created only')
+          : undefined;
         return (
           <div key={g.id} style={{ marginBottom: 16 }}>
-            <button onClick={() => toggle(g.id)} style={{
+            <button onClick={() => toggle(g.id)} title={tooltip} style={{
               display: 'flex', alignItems: 'center', gap: 10,
               width: '100%', background: 'transparent', border: 'none',
               padding: '8px 4px', cursor: 'pointer',

@@ -152,6 +152,11 @@ function ArchiveContent() {
                         : (rtl ? 'عام' : 'General')}
                       {' · '}
                       {rtl ? 'أرشفت ' : 'Archived '} {formatAgo(new Date(b.archivedAt), rtl)}
+                      {b.createdBy && (
+                        <div style={{ fontSize: 11, color: theme.mutedDim, marginTop: 2 }}>
+                          {rtl ? 'بواسطة ' : 'by '}{b.createdBy.name}
+                        </div>
+                      )}
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
                       {canManage && (

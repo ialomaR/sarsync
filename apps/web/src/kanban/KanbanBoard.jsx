@@ -170,7 +170,21 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
           </>
         )}
         <input ref={coverInputRef} type="file" accept="image/*" hidden onChange={handleCoverFile} />
-        <Popover anchorRef={moreRef} open={menuOpen} onClose={() => setMenuOpen(false)} theme={theme} width={210} align="end">
+        <Popover anchorRef={moreRef} open={menuOpen} onClose={() => setMenuOpen(false)} theme={theme} width={230} align="end">
+          {board.createdBy && (
+            <div style={{
+              padding: '6px 10px 8px',
+              borderBottom: `.5px solid ${theme.border}`,
+              marginBottom: 4,
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: theme.mutedDim, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                {rtl ? 'أُنشئت بواسطة' : 'Created by'}
+              </div>
+              <div style={{ fontSize: 12.5, color: theme.text, marginTop: 2 }}>
+                {board.createdBy.name}
+              </div>
+            </div>
+          )}
           {canManage && (
             <MenuItem theme={theme} onClick={() => { setMenuOpen(false); setRenaming(true); }}>
               {rtl ? 'تعديل الاسم' : 'Rename board'}
