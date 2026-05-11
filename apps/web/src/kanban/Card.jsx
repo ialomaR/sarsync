@@ -59,7 +59,11 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
         {card.cover && (
           <CoverPlaceholder url={card.cover.url} hue={card.cover.hue} label={card.cover.label} height={compact ? 70 : 90} />
         )}
-        <div style={{ padding: `${padY}px ${padX}px`, display: 'flex', flexDirection: 'column', gap }}>
+        <div style={{
+          padding: `${padY}px ${padX}px`,
+          display: 'flex', flexDirection: 'column', gap,
+          background: theme.card,
+        }}>
           {card.labels && card.labels.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {compact
@@ -69,8 +73,14 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
           )}
           <div style={{
             fontSize: compact ? 13 : 13.5, fontWeight: 500, lineHeight: 1.35,
-            color: theme.text, textWrap: 'pretty',
-          }}>{card.title}</div>
+            color: card.title ? theme.text : theme.mutedDim,
+            fontStyle: card.title ? 'normal' : 'italic',
+            textWrap: 'pretty',
+            // Always reserve at least one line of title space so the title
+            // never collapses to zero when both labels and footer are empty.
+            minHeight: '1.35em',
+            wordBreak: 'break-word',
+          }}>{card.title || '(بلا عنوان)'}</div>
           {(card.due || card.checklist || card.comments || (showAvatars && card.members)) && (
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
