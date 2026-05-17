@@ -347,8 +347,19 @@ export async function boardsRoutes(app: FastifyInstance) {
     if (!card) return reply.code(404).send({ error: 'not_found', message: 'Card not found' });
     await loadMembership(request, reply, card.list.board.workspaceId);
     if (reply.sent) return;
-    if (!canEditCard(request.membership!, card, card.list.board)) {
-      return reply.code(403).send({ error: 'forbidden', message: 'Only the card creator (or a manager) can edit this card' });
+
+    // Description and cover are collaborative — anyone with board edit access
+    // can add them. Title and due are part of card identity and stay
+    // restricted to the creator (or a manager) via canEditCard.
+    const wantsIdentityChange = parsed.data.title !== undefined || parsed.data.due !== undefined;
+    if (wantsIdentityChange) {
+      if (!canEditCard(request.membership!, card, card.list.board)) {
+        return reply.code(403).send({ error: 'forbidden', message: 'Only the card creator (or a manager) can edit this card' });
+      }
+    } else {
+      if (!canEditBoard(request.membership!, card.list.board)) {
+        return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit' });
+      }
     }
 
     const data: Parameters<typeof prisma.card.update>[0]['data'] = {};
@@ -387,6 +398,15 @@ export async function boardsRoutes(app: FastifyInstance) {
         verb: parsed.data.due ? 'card_due_set' : 'card_due_cleared',
         targetType: 'card', targetId: card.id,
         meta: { cardTitle: card.title, due: parsed.data.due },
+      });
+    }
+    if (parsed.data.coverAttachmentId !== undefined
+        && parsed.data.coverAttachmentId !== card.coverAttachmentId) {
+      await logActivity({
+        boardId: card.list.boardId, actorId: request.userId!,
+        verb: parsed.data.coverAttachmentId ? 'card_cover_set' : 'card_cover_cleared',
+        targetType: 'card', targetId: card.id,
+        meta: { cardTitle: card.title },
       });
     }
     emitBoardEvent(card.list.boardId, 'card:updated', {

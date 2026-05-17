@@ -532,7 +532,7 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 180px', gap: 28, marginTop: 24 }}>
                 <div style={{ minWidth: 0 }}>
                   <Section icon="paper" title={rtl ? 'الوصف' : 'Description'} theme={theme}
-                    trailing={canEditOwn && !editingDesc && (
+                    trailing={canEdit && !editingDesc && (
                       <button onClick={() => { setDesc(c.description || ''); setEditingDesc(true); }} style={{
                         background: theme.surface2, border: `.5px solid ${theme.border}`,
                         color: theme.text, padding: '3px 10px', borderRadius: 5,
@@ -576,7 +576,7 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                     cardId={cardId}
                     userDeptId={auth.user?.memberships?.find((mm) => mm.workspaceId === workspaceId)?.departmentId || null}
                     onUpload={canEdit ? uploadAttachment : null}
-                    onSetCover={canEditOwn ? setCover : null}
+                    onSetCover={canEdit ? setCover : null}
                     onAttachedFromMedia={canEdit ? ((att) => {
                       setState((s) => ({ ...s, card: { ...s.card, attachments: [...s.card.attachments, att] } }));
                     }) : null}
@@ -1703,6 +1703,8 @@ const VERB_LABELS = {
   card_described:      { en: 'updated the description',   ar: 'حدّث الوصف' },
   card_due_set:        { en: 'set a due date',            ar: 'حدّد تاريخ الاستحقاق' },
   card_due_cleared:    { en: 'cleared the due date',      ar: 'مسح تاريخ الاستحقاق' },
+  card_cover_set:      { en: 'set the cover',             ar: 'حدّد الغلاف' },
+  card_cover_cleared:  { en: 'removed the cover',         ar: 'أزال الغلاف' },
   member_assigned:     { en: 'assigned a member',         ar: 'أضاف عضوًا' },
   member_unassigned:   { en: 'unassigned a member',       ar: 'أزال عضوًا' },
   label_added:         { en: 'added a label',             ar: 'أضاف وسمًا' },

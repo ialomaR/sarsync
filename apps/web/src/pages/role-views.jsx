@@ -540,6 +540,8 @@ const ACTIVITY_VERB_LABELS = {
   card_described:       { en: 'updated a card',            ar: 'حدّث بطاقة' },
   card_due_set:         { en: 'set a due date',            ar: 'حدّد تاريخ استحقاق' },
   card_due_cleared:     { en: 'cleared a due date',        ar: 'مسح تاريخ استحقاق' },
+  card_cover_set:       { en: 'set a cover',               ar: 'حدّد غلاف بطاقة' },
+  card_cover_cleared:   { en: 'removed a cover',           ar: 'أزال غلاف بطاقة' },
   member_assigned:      { en: 'assigned a member',         ar: 'أضاف عضواً' },
   member_unassigned:    { en: 'unassigned a member',       ar: 'أزال عضواً' },
   label_added:          { en: 'added a label',             ar: 'أضاف وسماً' },

@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 export type Verb =
   | 'card_created' | 'card_moved' | 'card_renamed' | 'card_archived' | 'card_deleted'
   | 'card_described' | 'card_due_set' | 'card_due_cleared'
+  | 'card_cover_set' | 'card_cover_cleared'
   | 'member_assigned' | 'member_unassigned'
   | 'label_added' | 'label_removed'
   | 'comment_added'

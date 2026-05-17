@@ -53,10 +53,11 @@ export function canManageBoard(membership, board) {
   return false;
 }
 
-// Card-level edit: title, description, due, cover, delete.
+// Card-level edit: title, due, delete.
 // Mirrors canEditCard in apps/api/src/boards/auth.ts.
-// Collaborative actions (checklist, comments, members, attachments) still
-// use canEditBoard — they're working *on* the card, not changing its identity.
+// Description, cover, checklist, comments, members, and attachments stay
+// under canEditBoard — they're collaborative work on the card. Every edit
+// records the actor in the activity log.
 export function canEditCard(membership, card, board) {
   if (!membership || !card || !board) return false;
   if (membership.role === 'admin') return true;

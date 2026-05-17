@@ -107,15 +107,16 @@ export function canEditBoard(
   return false;
 }
 
-// Card-level edit: title, description, due date, cover, delete. Tighter than
-// canEditBoard because card metadata is "owned" by its creator. The rules:
+// Card-level edit: title, due date, delete. Tighter than canEditBoard because
+// these belong to the card's identity and stay "owned" by its creator.
 //   - admin: any card
 //   - dept_manager: any card on a board in their department
 //   - team_lead / member: only cards they created themselves
 //   - guest: never
-// Collaborative actions on a card (checklist toggles, comments, member
-// assignment, attachments) continue to use canEditBoard — those are part of
-// working *on* a card, not changing its identity.
+// Description, cover, checklist, comments, member assignment, and attachments
+// stay under canEditBoard — they're collaborative work *on* the card. Every
+// such edit still records the actor in the activity log, so attribution is
+// preserved even when the author isn't the creator.
 export function canEditCard(
   membership: { userId: string; role: Role; departmentId: string | null },
   card: { createdById: string | null },
