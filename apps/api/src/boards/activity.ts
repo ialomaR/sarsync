@@ -6,6 +6,7 @@ export type Verb =
   | 'card_created' | 'card_moved' | 'card_renamed' | 'card_archived' | 'card_deleted'
   | 'card_described' | 'card_due_set' | 'card_due_cleared'
   | 'card_cover_set' | 'card_cover_cleared'
+  | 'card_ordered_by_set' | 'card_ordered_by_cleared'
   | 'member_assigned' | 'member_unassigned'
   | 'label_added' | 'label_removed'
   | 'comment_added'

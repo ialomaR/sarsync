@@ -41,9 +41,24 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
   const listRef = React.useRef(null);
   const [handleHover, setHandleHover] = React.useState(false);
 
+  // During a list drag, the whole column is a drop target — not just the thin
+  // slots between lists. We pick "insert before" vs "insert after" from which
+  // half of the column the pointer is over (inline-aware so RTL works), then
+  // reuse the same slot indices the ListDropSlots use.
+  const onListDragOver = (e) => {
+    if (!isListDragging) return;
+    e.preventDefault();
+    const rect = listRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mid = rect.left + rect.width / 2;
+    const before = rtl ? e.clientX > mid : e.clientX < mid;
+    dnd.enterListSlot(before ? index : index + 1);
+  };
+
   return (
     <div
       ref={listRef}
+      onDragOver={onListDragOver}
       style={{
         width: 290,
         flexShrink: 0,

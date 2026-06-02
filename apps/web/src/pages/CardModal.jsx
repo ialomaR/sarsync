@@ -25,6 +25,9 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
   const [state, setState] = React.useState({ status: 'loading', card: null, error: null });
   const [editingDesc, setEditingDesc] = React.useState(false);
   const [desc, setDesc] = React.useState('');
+  const [editingTitle, setEditingTitle] = React.useState(false);
+  const [titleDraft, setTitleDraft] = React.useState('');
+  const [savingTitle, setSavingTitle] = React.useState(false);
   const [comment, setComment] = React.useState('');
   const [savingDesc, setSavingDesc] = React.useState(false);
   const [postingComment, setPostingComment] = React.useState(false);
@@ -141,6 +144,23 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
   }, [onClose]);
 
   const c = state.card;
+
+  const saveTitle = async () => {
+    const t = titleDraft.trim();
+    if (!t || t === c?.title) { setEditingTitle(false); return; }
+    setSavingTitle(true);
+    try {
+      const updated = await api(`/cards/${cardId}`, { method: 'PATCH', body: { title: t } });
+      setState((s) => ({ ...s, card: { ...s.card, title: updated.title } }));
+      onCardChanged?.({ title: updated.title });
+      loadActivity();
+      setEditingTitle(false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingTitle(false);
+    }
+  };
 
   const saveDesc = async () => {
     setSavingDesc(true);
@@ -289,6 +309,22 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
         ...s,
         card: { ...s.card, labelIds: has ? [...s.card.labelIds, labelId] : s.card.labelIds.filter((x) => x !== labelId) },
       }));
+      alert(err.message);
+    }
+  };
+
+  const setOrderedBy = async (value) => {
+    const next = value.trim() || null;
+    if (next === (c?.orderedBy || null)) return;
+    const prev = c?.orderedBy ?? null;
+    setState((s) => ({ ...s, card: { ...s.card, orderedBy: next } }));
+    try {
+      const updated = await api(`/cards/${cardId}`, { method: 'PATCH', body: { orderedBy: next } });
+      setState((s) => ({ ...s, card: { ...s.card, orderedBy: updated.orderedBy } }));
+      onCardChanged?.({ orderedBy: updated.orderedBy });
+      loadActivity();
+    } catch (err) {
+      setState((s) => ({ ...s, card: { ...s.card, orderedBy: prev } }));
       alert(err.message);
     }
   };
@@ -479,11 +515,41 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: theme.muted, fontSize: 12, marginBottom: 6 }}>
                     <Icon.board size={12} /> {rtl ? 'في قائمة' : 'in list'} <strong style={{ color: theme.text }}>{c.listTitle || listTitle}</strong>
                   </div>
-                  <h2 style={{
-                    margin: 0, fontSize: 19, fontWeight: 700,
-                    color: theme.text, letterSpacing: '-.015em', textWrap: 'balance',
-                    overflowWrap: 'anywhere',
-                  }}>{c.title}</h2>
+                  {editingTitle && canEditOwn ? (
+                    <textarea autoFocus value={titleDraft}
+                      onChange={(e) => setTitleDraft(e.target.value)}
+                      onBlur={saveTitle}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveTitle(); }
+                        if (e.key === 'Escape') { setTitleDraft(c.title); setEditingTitle(false); }
+                      }}
+                      rows={1}
+                      style={{
+                        width: '100%', margin: 0, fontSize: 19, fontWeight: 700,
+                        color: theme.text, letterSpacing: '-.015em',
+                        background: theme.surface2, border: `1px solid ${theme.accent}`,
+                        borderRadius: 6, padding: '6px 10px', outline: 'none',
+                        fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.3,
+                      }} />
+                  ) : (
+                    <h2
+                      onClick={() => { if (canEditOwn) { setTitleDraft(c.title); setEditingTitle(true); } }}
+                      title={canEditOwn ? (rtl ? 'انقر للتعديل' : 'Click to edit') : undefined}
+                      style={{
+                        margin: 0, fontSize: 19, fontWeight: 700,
+                        color: theme.text, letterSpacing: '-.015em', textWrap: 'balance',
+                        overflowWrap: 'anywhere',
+                        cursor: canEditOwn ? 'text' : 'default',
+                        borderRadius: 6,
+                        padding: canEditOwn ? '2px 4px' : 0,
+                        marginInlineStart: canEditOwn ? -4 : 0,
+                        transition: 'background .12s',
+                      }}
+                      onMouseEnter={(e) => { if (canEditOwn) e.currentTarget.style.background = theme.surface2; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                      {c.title}{savingTitle && <span style={{ color: theme.muted, fontWeight: 400, fontSize: 13 }}> …</span>}
+                    </h2>
+                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                   {canEdit && (
@@ -653,6 +719,7 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                       <MembersButton theme={theme} rtl={rtl} card={c} allMembers={allMembers}
                         boardDepartmentId={c.boardDepartmentId}
                         onToggle={toggleMember} />
+                      <OrderedByField theme={theme} rtl={rtl} value={c.orderedBy} onSave={setOrderedBy} />
                       <LabelsButton theme={theme} rtl={rtl} card={c} allLabels={allLabels} onToggle={toggleLabel}
                         boardId={c.boardId}
                         onLabelCreated={(lbl) => {
@@ -982,6 +1049,39 @@ function CompleteButton({ theme, rtl, card, cardId, onChange }) {
         ? (rtl ? 'مكتملة' : 'Completed')
         : (rtl ? 'وضع علامة كمكتملة' : 'Mark complete')}
     </button>
+  );
+}
+
+// Free-text "ordered by" — the name of the customer/requester this card is
+// for. Sits under Members in the sidebar; saves on blur or Enter.
+function OrderedByField({ theme, rtl, value, onSave }) {
+  const [text, setText] = React.useState(value || '');
+  React.useEffect(() => { setText(value || ''); }, [value]);
+  return (
+    <div style={{ marginTop: 2 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        fontSize: 11, fontWeight: 600, color: theme.muted, marginBottom: 4,
+      }}>
+        <Icon.user size={12} />
+        {rtl ? 'العميل (طلب من)' : 'Order by (customer)'}
+      </div>
+      <input value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => onSave(text)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          if (e.key === 'Escape') { setText(value || ''); e.currentTarget.blur(); }
+        }}
+        maxLength={200}
+        placeholder={rtl ? 'اسم العميل صاحب الطلب…' : 'Customer name…'}
+        style={{
+          width: '100%', padding: '7px 10px',
+          background: theme.surface2, color: theme.text,
+          border: `.5px solid ${theme.border}`, borderRadius: 6,
+          fontSize: 12.5, fontFamily: 'inherit', outline: 'none',
+        }} />
+    </div>
   );
 }
 
@@ -1705,6 +1805,8 @@ const VERB_LABELS = {
   card_due_cleared:    { en: 'cleared the due date',      ar: 'مسح تاريخ الاستحقاق' },
   card_cover_set:      { en: 'set the cover',             ar: 'حدّد الغلاف' },
   card_cover_cleared:  { en: 'removed the cover',         ar: 'أزال الغلاف' },
+  card_ordered_by_set: { en: 'set the customer',          ar: 'حدّد العميل' },
+  card_ordered_by_cleared: { en: 'cleared the customer',  ar: 'مسح العميل' },
   member_assigned:     { en: 'assigned a member',         ar: 'أضاف عضوًا' },
   member_unassigned:   { en: 'unassigned a member',       ar: 'أزال عضوًا' },
   label_added:         { en: 'added a label',             ar: 'أضاف وسمًا' },

@@ -40,6 +40,7 @@ interface RawBoard {
       title: string;
       position: number;
       due: Date | null;
+      orderedBy: string | null;
       coverHue: number | null;
       coverLabel: string | null;
       coverAttachmentId: string | null;
@@ -94,6 +95,7 @@ export function serializeBoard(
               title: c.title,
               position: c.position,
               due: c.due ? c.due.toISOString() : null,
+              orderedBy: c.orderedBy,
               coverHue: c.coverHue,
               coverLabel: c.coverLabel,
               coverAttachmentId: c.coverAttachmentId,

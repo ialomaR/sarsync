@@ -37,10 +37,13 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
         onDragEnd={() => dnd && dnd.end()}
         onDragEnter={(e) => {
           if (!canDrag) return;
+          // Only react to card drags — during a list drag, cards must not
+          // claim the drop target or the list-move detection breaks.
+          if (dnd?.drag?.kind !== 'card') return;
           e.preventDefault();
-          if (dnd && dnd.drag && dnd.drag.cardId !== card.id) dnd.enterCard(listId, index);
+          if (dnd.drag.cardId !== card.id) dnd.enterCard(listId, index);
         }}
-        onDragOver={(e) => { if (canDrag) e.preventDefault(); }}
+        onDragOver={(e) => { if (canDrag && dnd?.drag?.kind === 'card') e.preventDefault(); }}
         onClick={() => onClick && onClick(card.id)}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
@@ -86,6 +89,20 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
             minHeight: '1.35em',
             wordBreak: 'break-word',
           }}>{card.title || '(بلا عنوان)'}</div>
+          {card.orderedBy && (
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              alignSelf: 'flex-start', maxWidth: '100%',
+              color: theme.muted, fontSize: 11.5, fontWeight: 500,
+              background: theme.name === 'dark' ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.045)',
+              padding: '2px 7px', borderRadius: 5,
+            }}>
+              <Icon.user size={11} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {card.orderedBy}
+              </span>
+            </div>
+          )}
           {(card.due || card.checklist || card.comments || (showAvatars && card.members)) && (
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',

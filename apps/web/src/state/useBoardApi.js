@@ -18,6 +18,7 @@ function chipFromDetail(detail, prev) {
     labels: detail.labelIds || [],
     members: detail.memberIds || [],
     due: formatDueDate(detail.due),
+    orderedBy: detail.orderedBy || null,
     checklist: total > 0 ? { done, total } : null,
     comments: (detail.comments || []).length,
     cover,
@@ -97,13 +98,13 @@ export function useBoardApi(boardId) {
             : l),
         }));
       } else if (evt.kind === 'card:updated') {
-        const { id, title, due } = evt.payload;
+        const { id, title, due, orderedBy } = evt.payload;
         setState((s) => ({
           ...s,
           lists: s.lists.map((l) => ({
             ...l,
             cards: l.cards.map((c) => c.id === id
-              ? { ...c, title, due: formatDueDate(due) }
+              ? { ...c, title, due: formatDueDate(due), orderedBy: orderedBy ?? null }
               : c),
           })),
         }));

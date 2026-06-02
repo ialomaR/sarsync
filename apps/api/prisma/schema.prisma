@@ -446,6 +446,8 @@ model Card {
   description         String?
   position            Float   // fractional index within list
   due                 DateTime?
+  // Free-text name of the customer/requester this card is for ("order by").
+  orderedBy           String?
   // Decorative striped placeholder (legacy cover) — used when no real image
   coverHue            Int?
   coverLabel          String?

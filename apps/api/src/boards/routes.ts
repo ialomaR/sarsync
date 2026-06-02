@@ -56,6 +56,7 @@ const UpdateCard = z.object({
   description: z.string().max(20_000).nullable().optional(),
   due: z.string().datetime().nullable().optional(),
   coverAttachmentId: z.string().nullable().optional(),
+  orderedBy: z.string().max(200).nullable().optional(),
 });
 const MoveCard = z.object({
   toListId: z.string().min(1),
@@ -279,13 +280,13 @@ export async function boardsRoutes(app: FastifyInstance) {
       listId: list.id,
       card: {
         id: card.id, listId: card.listId, title: card.title, position: card.position,
-        due: null, coverHue: null, coverLabel: null,
+        due: null, orderedBy: null, coverHue: null, coverLabel: null,
         labelIds: [], memberIds: [], checklistDone: 0, checklistTotal: 0, commentCount: 0,
       },
     }, actorSocketId(request));
     return reply.code(201).send({
       id: card.id, listId: card.listId, title: card.title,
-      position: card.position, due: null, coverHue: null, coverLabel: null,
+      position: card.position, due: null, orderedBy: null, coverHue: null, coverLabel: null,
       labelIds: [], memberIds: [],
       checklistDone: 0, checklistTotal: 0, commentCount: 0,
     });
@@ -366,6 +367,7 @@ export async function boardsRoutes(app: FastifyInstance) {
     if (parsed.data.title !== undefined) data.title = parsed.data.title;
     if (parsed.data.description !== undefined) data.description = parsed.data.description;
     if (parsed.data.due !== undefined) data.due = parsed.data.due ? new Date(parsed.data.due) : null;
+    if (parsed.data.orderedBy !== undefined) data.orderedBy = parsed.data.orderedBy?.trim() || null;
     if (parsed.data.coverAttachmentId !== undefined) {
       // Validate attachment belongs to this card if not null
       if (parsed.data.coverAttachmentId) {
@@ -409,13 +411,23 @@ export async function boardsRoutes(app: FastifyInstance) {
         meta: { cardTitle: card.title },
       });
     }
+    if (parsed.data.orderedBy !== undefined && (data.orderedBy ?? null) !== card.orderedBy) {
+      await logActivity({
+        boardId: card.list.boardId, actorId: request.userId!,
+        verb: data.orderedBy ? 'card_ordered_by_set' : 'card_ordered_by_cleared',
+        targetType: 'card', targetId: card.id,
+        meta: { cardTitle: card.title, orderedBy: data.orderedBy ?? null },
+      });
+    }
     emitBoardEvent(card.list.boardId, 'card:updated', {
       id: updated.id, title: updated.title, description: updated.description,
       due: updated.due ? updated.due.toISOString() : null,
+      orderedBy: updated.orderedBy,
     }, actorSocketId(request));
     return reply.send({
       id: updated.id, title: updated.title, description: updated.description,
       due: updated.due ? updated.due.toISOString() : null,
+      orderedBy: updated.orderedBy,
     });
   });
 
@@ -462,6 +474,7 @@ export async function boardsRoutes(app: FastifyInstance) {
       title: card.title,
       description: card.description,
       due: card.due ? card.due.toISOString() : null,
+      orderedBy: card.orderedBy,
       coverHue: card.coverHue,
       coverLabel: card.coverLabel,
       coverAttachmentId: card.coverAttachmentId,

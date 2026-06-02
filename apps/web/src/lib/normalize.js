@@ -32,6 +32,7 @@ export function normalizeCard(c) {
     labels: c.labelIds || [],
     members: c.memberIds || [],
     due: formatDueDate(c.due),
+    orderedBy: c.orderedBy || null,
     checklist: c.checklistTotal > 0 ? { done: c.checklistDone, total: c.checklistTotal } : null,
     comments: c.commentCount || 0,
     cover: c.coverUrl

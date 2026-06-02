@@ -39,6 +39,7 @@ export interface Card {
   description: string | null;
   position: number;
   due: string | null;
+  orderedBy: string | null;
   coverHue: number | null;
   coverLabel: string | null;
   labelIds: string[];
