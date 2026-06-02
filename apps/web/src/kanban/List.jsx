@@ -41,24 +41,57 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
   const listRef = React.useRef(null);
   const [handleHover, setHandleHover] = React.useState(false);
 
-  // During a list drag, the whole column is a drop target — not just the thin
-  // slots between lists. We pick "insert before" vs "insert after" from which
-  // half of the column the pointer is over (inline-aware so RTL works), then
-  // reuse the same slot indices the ListDropSlots use.
-  const onListDragOver = (e) => {
-    if (!isListDragging) return;
-    e.preventDefault();
-    const rect = listRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const mid = rect.left + rect.width / 2;
-    const before = rtl ? e.clientX > mid : e.clientX < mid;
-    dnd.enterListSlot(before ? index : index + 1);
+  // Column reordering uses POINTER events, not native HTML5 drag. Native drag
+  // refused to initiate from the handle in production (no drag image, nothing
+  // moved) even though cards drag fine. Pointer events are reliable and
+  // RTL-safe. We reuse the existing drag/over state (startList/enterListSlot/
+  // end) so all the visual feedback — dimming the source column, the widening
+  // drop slot — keeps working unchanged.
+  const computeTargetIndex = (clientX) => {
+    // Count how many columns sit before the pointer in the inline direction;
+    // that count is the full-array insertion slot index (0..n), matching the
+    // indices the ListDropSlots and end() already use.
+    const cols = Array.from(document.querySelectorAll('[data-list-col]'));
+    let count = 0;
+    for (const col of cols) {
+      const r = col.getBoundingClientRect();
+      const center = r.left + r.width / 2;
+      if (rtl ? clientX < center : clientX > center) count++;
+    }
+    return count;
+  };
+
+  const onHandleMouseDown = (e) => {
+    if (e.button !== 0 || !canEdit || !dnd) return;
+    e.preventDefault(); // suppress text selection / image drag
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let started = false;
+    const onMove = (ev) => {
+      if (!started) {
+        // Small threshold so a plain click on the handle doesn't reorder.
+        if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 5) return;
+        started = true;
+        document.body.style.userSelect = 'none';
+        dnd.startList(list.id, index);
+      }
+      dnd.enterListSlot(computeTargetIndex(ev.clientX));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      if (started) dnd.end();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   };
 
   return (
     <div
       ref={listRef}
-      onDragOver={onListDragOver}
+      data-list-col=""
+      data-list-id={list.id}
       style={{
         width: 290,
         flexShrink: 0,
@@ -80,26 +113,16 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
           {canEdit && (
             <div
-              draggable
-              onDragStart={(e) => {
-                e.stopPropagation();
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', 'list:' + list.id);
-                // Use the whole list as the floating drag preview so the
-                // user sees what they're moving instead of a tiny dot icon.
-                if (listRef.current) {
-                  e.dataTransfer.setDragImage(listRef.current, 20, 20);
-                }
-                dnd?.startList(list.id, index);
-              }}
-              onDragEnd={() => dnd?.end()}
+              data-list-handle=""
+              onMouseDown={onHandleMouseDown}
               onMouseEnter={() => setHandleHover(true)}
               onMouseLeave={() => setHandleHover(false)}
               title={rtl ? 'اسحب لإعادة الترتيب' : 'Drag to reorder'}
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 width: 22, height: 22, flexShrink: 0, borderRadius: 4,
-                cursor: 'grab', color: handleHover ? theme.text : theme.mutedDim,
+                cursor: isSelfListDragging ? 'grabbing' : 'grab',
+                color: handleHover ? theme.text : theme.mutedDim,
                 background: handleHover ? (theme.name === 'dark' ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.05)') : 'transparent',
                 transition: 'background .12s, color .12s',
                 userSelect: 'none', touchAction: 'none',

@@ -62,31 +62,42 @@ export const DragCtx = React.createContext(null);
 export function DragProvider({ children, onMove, onMoveList }) {
   const [drag, setDrag] = React.useState(null);
   const [over, setOver] = React.useState(null);
+  // Mirror drag/over into refs so end() always reads the CURRENT values, even
+  // when called through a stale api object captured earlier in a pointer-drag
+  // gesture (mousedown captures the api once; without refs, end() would see
+  // the null drag/over from that first render).
+  const dragRef = React.useRef(null);
+  const overRef = React.useRef(null);
+  const putDrag = React.useCallback((v) => { dragRef.current = v; setDrag(v); }, []);
+  const putOver = React.useCallback((v) => { overRef.current = v; setOver(v); }, []);
 
   const api = React.useMemo(() => ({
     drag, over,
     // Card flow
-    start: (cardId, fromListId) => setDrag({ kind: 'card', cardId, fromListId }),
-    enterCard: (listId, index) => setOver({ kind: 'card', listId, index }),
-    enterListEnd: (listId, count) => setOver({ kind: 'card', listId, index: count }),
+    start: (cardId, fromListId) => putDrag({ kind: 'card', cardId, fromListId }),
+    enterCard: (listId, index) => putOver({ kind: 'card', listId, index }),
+    enterListEnd: (listId, count) => putOver({ kind: 'card', listId, index: count }),
     // List flow
-    startList: (listId, fromIndex) => setDrag({ kind: 'list', listId, fromIndex }),
-    enterListSlot: (toIndex) => setOver({ kind: 'list', toIndex }),
+    startList: (listId, fromIndex) => putDrag({ kind: 'list', listId, fromIndex }),
+    enterListSlot: (toIndex) => putOver({ kind: 'list', toIndex }),
     // Shared end — fires the right callback based on what was being dragged.
+    // Reads from refs (current), not the memoized closure (possibly stale).
     end: () => {
-      if (drag?.kind === 'card' && over?.kind === 'card') {
-        onMove?.(drag.cardId, over.listId, over.index);
-      } else if (drag?.kind === 'list' && over?.kind === 'list') {
-        if (over.toIndex !== drag.fromIndex && over.toIndex !== drag.fromIndex + 1) {
+      const d = dragRef.current;
+      const o = overRef.current;
+      if (d?.kind === 'card' && o?.kind === 'card') {
+        onMove?.(d.cardId, o.listId, o.index);
+      } else if (d?.kind === 'list' && o?.kind === 'list') {
+        if (o.toIndex !== d.fromIndex && o.toIndex !== d.fromIndex + 1) {
           // toIndex is the destination among the OTHER lists. If we drop just
           // past our own slot it's a no-op visually, so skip it.
-          const adjusted = over.toIndex > drag.fromIndex ? over.toIndex - 1 : over.toIndex;
-          onMoveList?.(drag.listId, adjusted);
+          const adjusted = o.toIndex > d.fromIndex ? o.toIndex - 1 : o.toIndex;
+          onMoveList?.(d.listId, adjusted);
         }
       }
-      setDrag(null); setOver(null);
+      putDrag(null); putOver(null);
     },
-  }), [drag, over, onMove, onMoveList]);
+  }), [drag, over, onMove, onMoveList, putDrag, putOver]);
 
   return <DragCtx.Provider value={api}>{children}</DragCtx.Provider>;
 }
