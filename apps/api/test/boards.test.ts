@@ -279,4 +279,108 @@ describe('boards + permissions', () => {
     expect(after.completedThisWeek).toBe(1);
     expect(after.activeCount).toBe(0);
   });
+
+  // ── Department reassignment (claim a General board into a department) ──────
+  // Rule: a General board can be moved into a department by its creator or a
+  // dept_manager — but only into their OWN dept, one-way. Once it has a dept,
+  // only an admin can move it again. Admins move freely.
+
+  it('the creator can claim their General board into their own department', async () => {
+    const app = await getApp();
+    const admin = await signupUser(app);
+    const ws = admin.membership.workspaceId;
+    const dept = await prisma.department.create({ data: { workspaceId: ws, name: 'Engineering' } });
+    // A dept_manager whose membership is in `dept`. They create a board — but
+    // dept_managers auto-scope to their dept, so build a General board directly.
+    const dm = await addMember(app, ws, { role: Role.dept_manager, departmentId: dept.id });
+    const general = await prisma.board.create({
+      data: { workspaceId: ws, title: 'Cross-team', departmentId: null, createdById: dm.id },
+    });
+
+    const move = await app.inject({
+      method: 'PATCH', url: `/boards/${general.id}`,
+      headers: authHeader(dm.accessToken),
+      payload: { departmentId: dept.id },
+    });
+    expect(move.statusCode).toBe(200);
+    expect(move.json().departmentId).toBe(dept.id);
+  });
+
+  it('cannot move a General board into a department that is not your own', async () => {
+    const app = await getApp();
+    const admin = await signupUser(app);
+    const ws = admin.membership.workspaceId;
+    const mine = await prisma.department.create({ data: { workspaceId: ws, name: 'Mine' } });
+    const other = await prisma.department.create({ data: { workspaceId: ws, name: 'Other' } });
+    const dm = await addMember(app, ws, { role: Role.dept_manager, departmentId: mine.id });
+    const general = await prisma.board.create({
+      data: { workspaceId: ws, title: 'Cross-team', departmentId: null, createdById: dm.id },
+    });
+
+    const move = await app.inject({
+      method: 'PATCH', url: `/boards/${general.id}`,
+      headers: authHeader(dm.accessToken),
+      payload: { departmentId: other.id },
+    });
+    expect(move.statusCode).toBe(403);
+  });
+
+  it('once a board has a department, a non-admin manager cannot re-home it', async () => {
+    const app = await getApp();
+    const admin = await signupUser(app);
+    const ws = admin.membership.workspaceId;
+    const mine = await prisma.department.create({ data: { workspaceId: ws, name: 'Mine' } });
+    const other = await prisma.department.create({ data: { workspaceId: ws, name: 'Other' } });
+    const dm = await addMember(app, ws, { role: Role.dept_manager, departmentId: mine.id });
+    const board = await prisma.board.create({
+      data: { workspaceId: ws, title: 'Owned', departmentId: mine.id, createdById: dm.id },
+    });
+
+    // dept_manager manages this board (can rename) but must NOT move it elsewhere.
+    const rename = await app.inject({
+      method: 'PATCH', url: `/boards/${board.id}`,
+      headers: authHeader(dm.accessToken),
+      payload: { title: 'Owned v2' },
+    });
+    expect(rename.statusCode).toBe(200);
+
+    const move = await app.inject({
+      method: 'PATCH', url: `/boards/${board.id}`,
+      headers: authHeader(dm.accessToken),
+      payload: { departmentId: other.id },
+    });
+    expect(move.statusCode).toBe(403);
+  });
+
+  it('admin can move a board back to General', async () => {
+    const { app, admin, dept } = await adminWithDept();
+    const board = await prisma.board.create({
+      data: { workspaceId: admin.membership.workspaceId, title: 'B', departmentId: dept.id, createdById: admin.id },
+    });
+    const move = await app.inject({
+      method: 'PATCH', url: `/boards/${board.id}`,
+      headers: authHeader(admin.accessToken),
+      payload: { departmentId: null },
+    });
+    expect(move.statusCode).toBe(200);
+    expect(move.json().departmentId).toBeNull();
+  });
+
+  it('a non-creator regular member cannot claim a General board', async () => {
+    const app = await getApp();
+    const admin = await signupUser(app);
+    const ws = admin.membership.workspaceId;
+    const dept = await prisma.department.create({ data: { workspaceId: ws, name: 'Dept' } });
+    const member = await addMember(app, ws, { role: Role.member, departmentId: dept.id });
+    const general = await prisma.board.create({
+      data: { workspaceId: ws, title: 'Cross-team', departmentId: null, createdById: admin.id },
+    });
+
+    const move = await app.inject({
+      method: 'PATCH', url: `/boards/${general.id}`,
+      headers: authHeader(member.accessToken),
+      payload: { departmentId: dept.id },
+    });
+    expect(move.statusCode).toBe(403);
+  });
 });

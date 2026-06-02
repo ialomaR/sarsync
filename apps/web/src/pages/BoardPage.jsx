@@ -9,7 +9,7 @@ import { buildTheme } from '../ui/theme.js';
 import { useBoardApi } from '../state/useBoardApi.js';
 import { DragProvider } from '../state/board-state.jsx';
 import { BoardDataProvider } from '../state/BoardDataContext.jsx';
-import { activeMembership, canEditBoard, canManageBoard, canDeleteBoard, canEditCard } from '../state/permissions.js';
+import { activeMembership, canEditBoard, canManageBoard, canDeleteBoard, canEditCard, canSetBoardDepartment } from '../state/permissions.js';
 import { BoardError, LoadingScreen } from '../ui/States.jsx';
 
 export function BoardPage() {
@@ -25,6 +25,7 @@ export function BoardPage() {
   const canEdit = canEditBoard(m, board.board);
   const canManage = canManageBoard(m, board.board);
   const canDelete = canDeleteBoard(m);
+  const canMoveDept = canSetBoardDepartment(m, board.board);
   const found = cardId && !cardId.startsWith('tmp-') ? board.findCard(cardId) : null;
 
   const [filterText, setFilterText] = React.useState('');
@@ -64,6 +65,9 @@ export function BoardPage() {
               canEdit={canEdit}
               canManage={canManage}
               canDelete={canDelete}
+              canMoveDept={canMoveDept}
+              membership={m}
+              onMoveDepartment={canMoveDept ? board.updateBoard : null}
               onUpdateBoard={canManage ? board.updateBoard : null}
               onToggleStar={board.toggleStar}
               onArchiveBoard={canManage ? board.archiveBoard : null}

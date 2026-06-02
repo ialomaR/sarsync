@@ -12,7 +12,7 @@ export type Verb =
   | 'comment_added'
   | 'checklist_added' | 'checklist_completed' | 'checklist_uncompleted'
   | 'list_created' | 'list_renamed' | 'list_archived'
-  | 'board_created' | 'board_archived' | 'board_restored';
+  | 'board_created' | 'board_archived' | 'board_restored' | 'board_moved';
 
 export async function logActivity(args: {
   boardId: string;

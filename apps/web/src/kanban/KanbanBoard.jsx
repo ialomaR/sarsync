@@ -7,8 +7,9 @@ import { useBoardData } from '../state/BoardDataContext.jsx';
 import { iconBtn, pillBtn } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
 import { DragCtx } from '../state/board-state.jsx';
+import { api } from '../lib/api.js';
 
-export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange }) {
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, canMoveDept, membership, onMoveDepartment, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange }) {
   const ctx = useBoardData();
   const navigate = useNavigate();
   const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
@@ -22,6 +23,7 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
   const [renaming, setRenaming] = React.useState(false);
   const [name, setName] = React.useState(board.title);
   const [uploadingCover, setUploadingCover] = React.useState(false);
+  const [deptModalOpen, setDeptModalOpen] = React.useState(false);
 
   React.useEffect(() => { setName(board.title); }, [board.title]);
 
@@ -162,7 +164,7 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
             )}
           </div>
         </Popover>
-        {(canManage || canDelete) && (
+        {(canManage || canDelete || canMoveDept) && (
           <button ref={moreRef} onClick={() => setMenuOpen((v) => !v)} style={pillBtn(theme)}>
             <Icon.more />
           </button>
@@ -206,6 +208,11 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
               {rtl ? 'تعديل الاسم' : 'Rename board'}
             </MenuItem>
           )}
+          {canMoveDept && onMoveDepartment && (
+            <MenuItem theme={theme} onClick={() => { setMenuOpen(false); setDeptModalOpen(true); }}>
+              {rtl ? 'نقل إلى قسم' : 'Move to department'}
+            </MenuItem>
+          )}
           {canManage && onUploadCover && (
             <MenuItem theme={theme} onClick={() => { setMenuOpen(false); coverInputRef.current?.click(); }}>
               {uploadingCover
@@ -238,6 +245,142 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
           )}
         </Popover>
       </div>
+      {deptModalOpen && onMoveDepartment && (
+        <MoveDepartmentModal
+          theme={theme} rtl={rtl} board={board} membership={membership}
+          onClose={() => setDeptModalOpen(false)}
+          onMove={onMoveDepartment} />
+      )}
+    </div>
+  );
+}
+
+// Reassign a board's department. Admins get the full list (including "General"
+// to un-assign); everyone else can only claim a General board into their own
+// department — a one-way move, enforced on the server by canSetBoardDepartment.
+function MoveDepartmentModal({ theme, rtl, board, membership, onClose, onMove }) {
+  const isAdmin = membership?.role === 'admin';
+  const [departments, setDepartments] = React.useState(null);  // null until loaded
+  const [selected, setSelected] = React.useState(
+    isAdmin ? (board.departmentId || '') : (membership?.departmentId || ''),
+  );
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    api(`/workspaces/${board.workspaceId}/departments`)
+      .then((d) => { if (!cancelled) setDepartments(d.departments || []); })
+      .catch(() => { if (!cancelled) setDepartments([]); });
+    return () => { cancelled = true; };
+  }, [board.workspaceId]);
+
+  // Non-admins may only target their own department.
+  const ownDept = (departments || []).find((d) => d.id === membership?.departmentId);
+  const deptName = (d) => (rtl ? (d?.nameAr || d?.name) : d?.name) || '';
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    const target = selected || null;
+    if (target === (board.departmentId || null)) { onClose(); return; }
+    setSaving(true); setError(null);
+    try {
+      await onMove({ departmentId: target });
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Failed to move board');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 60,
+      background: 'rgba(10,12,18,.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20,
+    }}>
+      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} style={{
+        background: theme.surface, color: theme.text,
+        borderRadius: 12, width: 420, maxWidth: '100%',
+        boxShadow: '0 20px 60px rgba(0,0,0,.4)',
+        border: theme.name === 'dark' ? `.5px solid ${theme.border}` : 'none',
+      }}>
+        <div style={{
+          padding: '16px 20px', borderBottom: `.5px solid ${theme.border}`,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{rtl ? 'نقل إلى قسم' : 'Move to department'}</h3>
+          <button type="button" onClick={onClose} style={{
+            background: 'transparent', border: 'none', color: theme.muted,
+            fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: 4,
+          }}>×</button>
+        </div>
+        <div style={{ padding: '20px' }}>
+          {isAdmin ? (
+            <label style={{ display: 'block' }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: theme.text, marginBottom: 5 }}>
+                {rtl ? 'القسم' : 'Department'}
+              </div>
+              <select
+                value={selected}
+                onChange={(e) => setSelected(e.target.value)}
+                disabled={departments === null}
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  background: theme.bg, color: theme.text,
+                  border: `1px solid ${theme.border}`, borderRadius: 6,
+                  fontSize: 13.5, fontFamily: 'inherit', outline: 'none',
+                  cursor: departments === null ? 'wait' : 'pointer',
+                }}>
+                <option value="">{rtl ? 'عام (مرئية للجميع)' : 'General (visible to everyone)'}</option>
+                {(departments || []).map((d) => (
+                  <option key={d.id} value={d.id}>{deptName(d)}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10.5, color: theme.muted, marginTop: 6 }}>
+                {rtl
+                  ? 'اختيار قسم يقصر اللوحة على أعضائه. اختيار «عام» يجعلها مرئية للجميع.'
+                  : 'Picking a department restricts the board to its members. "General" makes it visible to everyone.'}
+              </div>
+            </label>
+          ) : (
+            <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.6 }}>
+              {departments === null
+                ? (rtl ? 'جارِ التحميل…' : 'Loading…')
+                : (rtl
+                    ? <>سيتم نقل هذه اللوحة من «عام» إلى قسم <strong>{deptName(ownDept)}</strong>. لا يمكن التراجع عن هذه الخطوة لاحقًا — فقط المسؤول يقدر يعيد نقلها.</>
+                    : <>This board will move from General into the <strong>{deptName(ownDept)}</strong> department. This is one-way — only an admin can move it again afterward.</>)}
+            </div>
+          )}
+          {error && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 12 }}>{error}</div>}
+        </div>
+        <div style={{
+          padding: '12px 20px', borderTop: `.5px solid ${theme.border}`,
+          display: 'flex', justifyContent: 'flex-end', gap: 8,
+        }}>
+          <button type="button" onClick={onClose} style={{
+            padding: '8px 14px', borderRadius: 6,
+            background: 'transparent', color: theme.muted,
+            border: `.5px solid ${theme.border}`,
+            fontSize: 12.5, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+          }}>{rtl ? 'إلغاء' : 'Cancel'}</button>
+          <button type="submit" disabled={saving || departments === null || (!isAdmin && !ownDept)} style={{
+            padding: '8px 14px', borderRadius: 6,
+            background: theme.accent, color: theme.accentText, border: 'none',
+            fontSize: 12.5, fontWeight: 600,
+            cursor: saving ? 'default' : 'pointer',
+            opacity: (saving || departments === null || (!isAdmin && !ownDept)) ? 0.6 : 1,
+            fontFamily: 'inherit',
+          }}>{saving ? '…' : (rtl ? 'نقل' : 'Move')}</button>
+        </div>
+      </form>
     </div>
   );
 }

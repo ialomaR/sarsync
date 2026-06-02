@@ -69,6 +69,23 @@ export function canEditCard(membership, card, board) {
   return false;
 }
 
+// Whether the user may reassign this board's department — mirrors
+// canSetBoardDepartment in apps/api/src/boards/auth.ts. A board in "General"
+// (no dept) can be claimed into a department by its creator or a dept_manager,
+// but only into their OWN department, and only one-way: once it has a dept,
+// only an admin can move it again. This controls whether the "Move to
+// department" menu item appears at all.
+export function canSetBoardDepartment(membership, board) {
+  if (!membership || !board) return false;
+  if (membership.role === 'admin') return true;            // moves freely, any direction
+  if (membership.role === 'guest') return false;
+  if (board.departmentId) return false;                    // already claimed → locked
+  if (!membership.departmentId) return false;              // no home dept to claim into
+  if (board.createdById && board.createdById === membership.userId) return true;
+  if (membership.role === 'dept_manager') return true;
+  return false;
+}
+
 export function canDeleteBoard(membership) {
   return membership?.role === 'admin';
 }

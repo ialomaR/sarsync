@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
-import { loadMembership, canViewBoard, canEditBoard, canEditCard, canManageBoard, hasDeptAccess } from './auth.js';
+import { loadMembership, canViewBoard, canEditBoard, canEditCard, canManageBoard, canSetBoardDepartment, hasDeptAccess } from './auth.js';
 import { positionAt } from './positions.js';
 import { serializeBoard, serializeLabel, serializeUserMini } from './serialize.js';
 import { logActivity } from './activity.js';
@@ -687,17 +687,61 @@ export async function boardsRoutes(app: FastifyInstance) {
     if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
     await loadMembership(request, reply, board.workspaceId);
     if (reply.sent) return;
-    // Manage-level — rename / hue / dept-team reassign. Cross-dept assignees
-    // can edit cards on this board but cannot manage the board itself.
-    if (!canManageBoard(request.membership!, board)) return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can change board settings' });
+    const m = request.membership!;
 
     const parsed = UpdateBoard.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
+    const data = parsed.data;
+
+    // What is this PATCH actually trying to change? Department reassignment is
+    // gated separately from the rest (see below).
+    const wantsDeptChange = 'departmentId' in data && (data.departmentId ?? null) !== board.departmentId;
+    const wantsTeamChange = 'teamId' in data && (data.teamId ?? null) !== board.teamId;
+    const wantsOtherChange = data.title !== undefined || data.hue !== undefined || wantsTeamChange;
+
+    // Title / hue / team reassignment — full management rights (cross-dept
+    // assignees can edit cards but never manage the board itself).
+    const isManager = canManageBoard(m, board);
+    if (wantsOtherChange && !isManager) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can change board settings' });
+    }
+    // Department reassignment follows its own one-way rule: admins move freely;
+    // a creator / dept_manager may only claim a General board into their own
+    // department. Gated independently of isManager so a dept_manager cannot
+    // re-home a board that already lives in their department.
+    if (wantsDeptChange && !canSetBoardDepartment(m, board, data.departmentId ?? null)) {
+      return reply.code(403).send({ error: 'forbidden', message: 'You can only move a general board into your own department' });
+    }
+    // A request that changes nothing the caller is entitled to touch is forbidden.
+    if (!wantsDeptChange && !wantsOtherChange && !isManager) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Only board managers can change board settings' });
+    }
+
+    // Validate any dept/team target belongs to this workspace (mirrors create).
+    if (data.departmentId) {
+      const d = await prisma.department.findUnique({ where: { id: data.departmentId } });
+      if (!d || d.workspaceId !== board.workspaceId) {
+        return reply.code(400).send({ error: 'invalid_dept', message: 'Department not in workspace' });
+      }
+    }
+    if (data.teamId) {
+      const t = await prisma.team.findUnique({ where: { id: data.teamId } });
+      if (!t || t.workspaceId !== board.workspaceId) {
+        return reply.code(400).send({ error: 'invalid_team', message: 'Team not in workspace' });
+      }
+    }
 
     const updated = await prisma.board.update({
       where: { id: board.id },
-      data: parsed.data,
+      data,
     });
+    if (wantsDeptChange) {
+      await logActivity({
+        boardId: board.id, actorId: m.userId,
+        verb: 'board_moved', targetType: 'board', targetId: board.id,
+        meta: { boardTitle: updated.title, departmentId: updated.departmentId },
+      });
+    }
     const star = await prisma.boardStar.findUnique({
       where: { boardId_userId: { boardId: updated.id, userId: request.userId! } },
       select: { boardId: true },

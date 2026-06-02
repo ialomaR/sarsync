@@ -148,3 +148,27 @@ export function canManageBoard(
   if (membership.role === Role.team_lead && board.teamId && membership.teamId === board.teamId) return true;
   return false;
 }
+
+// Department reassignment — a narrower action than canManageBoard, and gated
+// independently of it. A board sitting in "General" (no dept) can be *claimed*
+// into a department by its creator or a dept_manager, but ONLY into their own
+// department, and it's a one-way move: they cannot pull it back to General or
+// push it to a different department afterward. Once a board has a department,
+// only an admin can change it again (which is why canManageBoard alone is not
+// enough — a dept_manager managing a board in their dept must NOT be able to
+// re-home it elsewhere). Admins move boards freely in any direction.
+export function canSetBoardDepartment(
+  membership: { userId: string; role: Role; departmentId: string | null },
+  board: { departmentId: string | null; createdById: string | null },
+  targetDepartmentId: string | null,
+): boolean {
+  if (membership.role === Role.admin) return true;
+  if (membership.role === Role.guest) return false;
+  if (board.departmentId) return false;                            // already claimed → locked
+  if (!targetDepartmentId) return false;                           // can't send to General
+  if (!membership.departmentId) return false;                      // no home dept to claim into
+  if (targetDepartmentId !== membership.departmentId) return false; // own dept only
+  if (board.createdById && board.createdById === membership.userId) return true;
+  if (membership.role === Role.dept_manager) return true;
+  return false;
+}
