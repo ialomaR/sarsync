@@ -20,7 +20,7 @@ import { useAuth } from '../state/AuthContext.jsx';
 import { Popover, PopoverHeader } from '../ui/Popover.jsx';
 import { canEditCard } from '../state/permissions.js';
 
-export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId, canEdit = true, membership, boardDepartmentId, onCardChanged, onRefetchBoard }) {
+export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId, canEdit = true, membership, boardDepartmentId, fields = [], fieldValues = {}, onSetFieldValue, onCardChanged, onRefetchBoard }) {
   const auth = useAuth();
   const [state, setState] = React.useState({ status: 'loading', card: null, error: null });
   const [editingDesc, setEditingDesc] = React.useState(false);
@@ -635,6 +635,13 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
                     )}
                   </Section>
 
+                  {fields.length > 0 && (
+                    <CustomFieldsSection theme={theme} rtl={rtl} canEdit={canEdit}
+                      fields={fields} values={fieldValues}
+                      allMembers={allMembers}
+                      onSet={onSetFieldValue} />
+                  )}
+
                   <AttachmentsSection theme={theme} rtl={rtl}
                     attachments={c.attachments}
                     coverAttachmentId={c.coverAttachmentId}
@@ -802,6 +809,100 @@ function Section({ icon, title, trailing, theme, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+// Renders the board's custom fields (table-view columns) as editable rows on
+// the card. Each field type maps to the right input; changes call onSet with
+// the one key that matches the field's type. Read-only when canEdit is false.
+function CustomFieldsSection({ theme, rtl, canEdit, fields, values, allMembers, onSet }) {
+  return (
+    <Section icon="settings" title={rtl ? 'حقول مخصّصة' : 'Custom fields'} theme={theme}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {fields.map((f) => (
+          <FieldRow key={f.id} theme={theme} rtl={rtl} canEdit={canEdit && !!onSet}
+            field={f} value={values?.[f.id]} allMembers={allMembers}
+            onSet={(body) => onSet?.(f.id, body)} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function FieldRow({ theme, rtl, canEdit, field, value, allMembers, onSet }) {
+  const inputStyle = {
+    width: '100%', padding: '7px 10px', borderRadius: 6,
+    background: theme.surface2, color: theme.text,
+    border: `.5px solid ${theme.border}`,
+    fontSize: 13, fontFamily: 'inherit', outline: 'none',
+  };
+  const label = (
+    <div style={{
+      fontSize: 11, fontWeight: 700, letterSpacing: '.04em',
+      color: theme.mutedDim, textTransform: 'uppercase', marginBottom: 4,
+    }}>{field.name}</div>
+  );
+
+  // ── Read-only rendering ──
+  if (!canEdit) {
+    let display = '—';
+    if (field.type === 'text') display = value?.valueText || '—';
+    else if (field.type === 'number') display = value?.valueNumber != null ? String(value.valueNumber) : '—';
+    else if (field.type === 'date') display = value?.valueDate ? formatDueDate(value.valueDate) : '—';
+    else if (field.type === 'person') display = (allMembers.find((m) => m.userId === value?.valueUserId)?.name) || '—';
+    else if (field.type === 'select') display = (field.options || []).find((o) => o.id === value?.valueOptionId)?.label || '—';
+    return (
+      <div>{label}<div style={{ fontSize: 13, color: display === '—' ? theme.mutedDim : theme.text }}>{display}</div></div>
+    );
+  }
+
+  // ── Editable rendering ──
+  if (field.type === 'text') {
+    return <div>{label}<TextNumberInput style={inputStyle}
+      initial={value?.valueText ?? ''} type="text"
+      onCommit={(v) => onSet({ text: v === '' ? null : v })} /></div>;
+  }
+  if (field.type === 'number') {
+    return <div>{label}<TextNumberInput style={inputStyle}
+      initial={value?.valueNumber != null ? String(value.valueNumber) : ''} type="number"
+      onCommit={(v) => onSet({ number: v === '' ? null : Number(v) })} /></div>;
+  }
+  if (field.type === 'date') {
+    const ymd = value?.valueDate ? new Date(value.valueDate).toISOString().slice(0, 10) : '';
+    return <div>{label}<input type="date" value={ymd} style={inputStyle}
+      onChange={(e) => onSet({ date: e.target.value ? new Date(`${e.target.value}T00:00:00`).toISOString() : null })} /></div>;
+  }
+  if (field.type === 'select') {
+    return <div>{label}<select value={value?.valueOptionId || ''} style={{ ...inputStyle, cursor: 'pointer' }}
+      onChange={(e) => onSet({ optionId: e.target.value || null })}>
+      <option value="">{rtl ? '— لا شيء —' : '— None —'}</option>
+      {(field.options || []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+    </select></div>;
+  }
+  if (field.type === 'person') {
+    return <div>{label}<select value={value?.valueUserId || ''} style={{ ...inputStyle, cursor: 'pointer' }}
+      onChange={(e) => onSet({ userId: e.target.value || null })}>
+      <option value="">{rtl ? '— لا أحد —' : '— Nobody —'}</option>
+      {allMembers.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+    </select></div>;
+  }
+  return null;
+}
+
+// Controlled text/number input that commits on blur or Enter (Escape reverts),
+// so we don't fire a PUT on every keystroke.
+function TextNumberInput({ initial, type, style, onCommit }) {
+  const [v, setV] = React.useState(initial);
+  React.useEffect(() => { setV(initial); }, [initial]);
+  const commit = () => { if (v !== initial) onCommit(v.trim?.() ?? v); };
+  return (
+    <input type={type} value={v} style={style}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { setV(initial); e.currentTarget.blur(); }
+      }} />
   );
 }
 

@@ -37,6 +37,8 @@ export function useBoardApi(boardId) {
     lists: [],
     peopleById: {},
     labelsById: {},
+    fields: [],
+    fieldsById: {},
   });
 
   const refetch = React.useCallback(async () => {
@@ -55,6 +57,8 @@ export function useBoardApi(boardId) {
         lists: board.lists,
         peopleById: board.peopleById,
         labelsById: board.labelsById,
+        fields: board.fields,
+        fieldsById: board.fieldsById,
       });
     } catch (err) {
       setState((s) => ({ ...s, status: 'error', error: err }));
@@ -193,6 +197,41 @@ export function useBoardApi(boardId) {
             ...l,
             cards: l.cards.map((c) => c.id === cardId
               ? { ...c, labels: (c.labels || []).filter((x) => x !== labelId) }
+              : c),
+          })),
+        }));
+      } else if (evt.kind === 'field:added' || evt.kind === 'field:updated') {
+        const { field } = evt.payload;
+        setState((s) => {
+          const fields = s.fields.filter((f) => f.id !== field.id).concat(field)
+            .sort((a, b) => a.position - b.position);
+          return { ...s, fields, fieldsById: { ...s.fieldsById, [field.id]: field } };
+        });
+      } else if (evt.kind === 'field:deleted') {
+        const { id } = evt.payload;
+        setState((s) => ({
+          ...s,
+          fields: s.fields.filter((f) => f.id !== id),
+          fieldsById: Object.fromEntries(Object.entries(s.fieldsById).filter(([k]) => k !== id)),
+          // Drop the value for this column off every card
+          lists: s.lists.map((l) => ({
+            ...l,
+            cards: l.cards.map((c) => {
+              if (!c.fieldValues || !c.fieldValues[id]) return c;
+              const fv = { ...c.fieldValues }; delete fv[id];
+              return { ...c, fieldValues: fv };
+            }),
+          })),
+        }));
+      } else if (evt.kind === 'card:field_changed') {
+        const { cardId, value } = evt.payload;
+        if (!value) return;
+        setState((s) => ({
+          ...s,
+          lists: s.lists.map((l) => ({
+            ...l,
+            cards: l.cards.map((c) => c.id === cardId
+              ? { ...c, fieldValues: { ...c.fieldValues, [value.fieldId]: value } }
               : c),
           })),
         }));
@@ -394,6 +433,75 @@ export function useBoardApi(boardId) {
     setState((s) => ({ ...s, board: { ...s.board, coverUrl: null } }));
   }, [state.board]);
 
+  // ── Custom fields ──────────────────────────────────────────────────────
+  // Server broadcasts field:* / card:field_changed events that update local
+  // state, so these mutations don't optimistically duplicate that work — they
+  // call the API and let the echo (or refetch fallback) reconcile.
+
+  const createField = React.useCallback(async (input) => {
+    if (!state.board) return null;
+    const field = await api(`/boards/${state.board.id}/fields`, { method: 'POST', body: input });
+    setState((s) => s.fieldsById[field.id]
+      ? s
+      : {
+          ...s,
+          fields: [...s.fields, field].sort((a, b) => a.position - b.position),
+          fieldsById: { ...s.fieldsById, [field.id]: field },
+        });
+    return field;
+  }, [state.board]);
+
+  const updateField = React.useCallback(async (fieldId, patch) => {
+    const field = await api(`/fields/${fieldId}`, { method: 'PATCH', body: patch });
+    setState((s) => ({
+      ...s,
+      fields: s.fields.filter((f) => f.id !== field.id).concat(field).sort((a, b) => a.position - b.position),
+      fieldsById: { ...s.fieldsById, [field.id]: field },
+    }));
+    return field;
+  }, []);
+
+  const deleteField = React.useCallback(async (fieldId) => {
+    await api(`/fields/${fieldId}`, { method: 'DELETE' });
+    setState((s) => ({
+      ...s,
+      fields: s.fields.filter((f) => f.id !== fieldId),
+      fieldsById: Object.fromEntries(Object.entries(s.fieldsById).filter(([k]) => k !== fieldId)),
+      lists: s.lists.map((l) => ({
+        ...l,
+        cards: l.cards.map((c) => {
+          if (!c.fieldValues || !c.fieldValues[fieldId]) return c;
+          const fv = { ...c.fieldValues }; delete fv[fieldId];
+          return { ...c, fieldValues: fv };
+        }),
+      })),
+    }));
+  }, []);
+
+  // body: { text?, number?, date?, userId?, optionId? } — only the key matching
+  // the field's type is honored server-side.
+  const setCardFieldValue = React.useCallback(async (cardId, fieldId, body) => {
+    const res = await api(`/cards/${cardId}/fields/${fieldId}`, { method: 'PUT', body });
+    const value = {
+      fieldId,
+      valueText: res.valueText ?? null,
+      valueNumber: res.valueNumber ?? null,
+      valueDate: res.valueDate ?? null,
+      valueUserId: res.valueUserId ?? null,
+      valueOptionId: res.valueOptionId ?? null,
+    };
+    setState((s) => ({
+      ...s,
+      lists: s.lists.map((l) => ({
+        ...l,
+        cards: l.cards.map((c) => c.id === cardId
+          ? { ...c, fieldValues: { ...c.fieldValues, [fieldId]: value } }
+          : c),
+      })),
+    }));
+    return value;
+  }, []);
+
   return {
     status: state.status,
     error: state.error,
@@ -401,9 +509,12 @@ export function useBoardApi(boardId) {
     lists: state.lists,
     peopleById: state.peopleById,
     labelsById: state.labelsById,
+    fields: state.fields,
+    fieldsById: state.fieldsById,
     moveCard, moveList, addCard, addList, findCard, patchLocalCard, refetch,
     renameList, deleteList,
     updateBoard, archiveBoard, restoreBoard, deleteBoard, toggleStar,
     uploadCover, removeCover,
+    createField, updateField, deleteField, setCardFieldValue,
   };
 }

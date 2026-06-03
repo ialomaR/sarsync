@@ -18,6 +18,37 @@ export function serializeLabel(l: { id: string; name: string; color: string; bg:
   return { id: l.id, name: l.name, color: l.color, bg: l.bg };
 }
 
+export function serializeBoardField(f: {
+  id: string; name: string; type: string; position: number; options: unknown;
+}) {
+  return {
+    id: f.id,
+    name: f.name,
+    type: f.type,
+    position: f.position,
+    // options is stored as JSON ([{id,label,color}]); pass it through as-is.
+    options: Array.isArray(f.options) ? f.options : null,
+  };
+}
+
+function serializeFieldValue(v: {
+  fieldId: string;
+  valueText: string | null;
+  valueNumber: number | null;
+  valueDate: Date | null;
+  valueUserId: string | null;
+  valueOptionId: string | null;
+}) {
+  return {
+    fieldId: v.fieldId,
+    valueText: v.valueText,
+    valueNumber: v.valueNumber,
+    valueDate: v.valueDate ? v.valueDate.toISOString() : null,
+    valueUserId: v.valueUserId,
+    valueOptionId: v.valueOptionId,
+  };
+}
+
 interface RawBoard {
   id: string;
   title: string;
@@ -30,6 +61,7 @@ interface RawBoard {
   workspaceId: string;
   departmentId: string | null;
   teamId: string | null;
+  fields?: Array<{ id: string; name: string; type: string; position: number; options: unknown }>;
   lists: Array<{
     id: string;
     title: string;
@@ -47,6 +79,14 @@ interface RawBoard {
       completedAt: Date | null;
       labels: Array<{ labelId: string }>;
       members: Array<{ userId: string }>;
+      fieldValues?: Array<{
+        fieldId: string;
+        valueText: string | null;
+        valueNumber: number | null;
+        valueDate: Date | null;
+        valueUserId: string | null;
+        valueOptionId: string | null;
+      }>;
       _count?: { comments: number };
       checklist?: Array<{ done: boolean }>;
     }>;
@@ -76,6 +116,10 @@ export function serializeBoard(
     workspaceId: board.workspaceId,
     departmentId: board.departmentId,
     teamId: board.teamId,
+    fields: (board.fields ?? [])
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map(serializeBoardField),
     lists: board.lists
       .slice()
       .sort((a, b) => a.position - b.position)
@@ -103,6 +147,7 @@ export function serializeBoard(
               completedAt: c.completedAt ? c.completedAt.toISOString() : null,
               labelIds: c.labels.map((x) => x.labelId),
               memberIds: c.members.map((x) => x.userId),
+              fieldValues: (c.fieldValues ?? []).map(serializeFieldValue),
               checklistDone: done,
               checklistTotal: total,
               commentCount: c._count?.comments ?? 0,

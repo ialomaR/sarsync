@@ -16,6 +16,7 @@
     "db:logs": "docker compose logs -f db",
     "prisma:generate": "npm run prisma:generate -w @sarsync/api",
     "prisma:migrate": "npm run prisma:migrate -w @sarsync/api",
+    "prisma:migrate:deploy": "npm run prisma:migrate:deploy -w @sarsync/api",
     "prisma:studio": "npm run prisma:studio -w @sarsync/api",
     "prisma:seed": "npm run prisma:seed -w @sarsync/api"
   }

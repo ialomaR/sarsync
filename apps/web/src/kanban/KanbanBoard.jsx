@@ -8,8 +8,9 @@ import { iconBtn, pillBtn } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
 import { DragCtx } from '../state/board-state.jsx';
 import { api } from '../lib/api.js';
+import { FieldsManagerModal } from './FieldsManager.jsx';
 
-export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, canMoveDept, membership, onMoveDepartment, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange }) {
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, canMoveDept, membership, onMoveDepartment, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange, fields = [], onCreateField, onUpdateField, onDeleteField }) {
   const ctx = useBoardData();
   const navigate = useNavigate();
   const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
@@ -24,6 +25,7 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
   const [name, setName] = React.useState(board.title);
   const [uploadingCover, setUploadingCover] = React.useState(false);
   const [deptModalOpen, setDeptModalOpen] = React.useState(false);
+  const [fieldsOpen, setFieldsOpen] = React.useState(false);
 
   React.useEffect(() => { setName(board.title); }, [board.title]);
 
@@ -164,7 +166,7 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
             )}
           </div>
         </Popover>
-        {(canManage || canDelete || canMoveDept) && (
+        {(canManage || canDelete || canMoveDept || (canEdit && onCreateField)) && (
           <button ref={moreRef} onClick={() => setMenuOpen((v) => !v)} style={pillBtn(theme)}>
             <Icon.more />
           </button>
@@ -213,6 +215,11 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
               {rtl ? 'نقل إلى قسم' : 'Move to department'}
             </MenuItem>
           )}
+          {canEdit && onCreateField && (
+            <MenuItem theme={theme} onClick={() => { setMenuOpen(false); setFieldsOpen(true); }}>
+              {rtl ? 'إدارة الحقول' : 'Manage fields'}
+            </MenuItem>
+          )}
           {canManage && onUploadCover && (
             <MenuItem theme={theme} onClick={() => { setMenuOpen(false); coverInputRef.current?.click(); }}>
               {uploadingCover
@@ -250,6 +257,12 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
           theme={theme} rtl={rtl} board={board} membership={membership}
           onClose={() => setDeptModalOpen(false)}
           onMove={onMoveDepartment} />
+      )}
+      {fieldsOpen && onCreateField && (
+        <FieldsManagerModal
+          theme={theme} rtl={rtl} fields={fields}
+          onCreate={onCreateField} onUpdate={onUpdateField} onDelete={onDeleteField}
+          onClose={() => setFieldsOpen(false)} />
       )}
     </div>
   );

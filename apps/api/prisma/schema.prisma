@@ -310,6 +310,16 @@ enum Role {
   guest
 }
 
+// Type of a custom board field (column). Drives how its value is stored in
+// CardFieldValue and rendered in the table view.
+enum FieldType {
+  text
+  number
+  date
+  select
+  person
+}
+
 // A Membership is the join between User and Workspace, plus role/dept/team.
 // The same User can be in multiple workspaces with different roles.
 model Membership {
@@ -382,6 +392,8 @@ model Board {
   lists      List[]
   activity   Activity[]
   labels     Label[]
+  // Custom field definitions (table-view columns) scoped to this board.
+  fields     BoardField[]
   // Explicit per-board access for users outside the board's department.
   // Auto-created when a card on this board gets assigned to a user without
   // base dept access.
@@ -469,6 +481,7 @@ model Card {
   checklist   ChecklistItem[]
   comments    Comment[]
   attachments Attachment[]
+  fieldValues CardFieldValue[]
 
   @@index([listId])
   @@index([listId, position])
@@ -508,6 +521,48 @@ model CardLabel {
 
   @@id([cardId, labelId])
   @@index([labelId])
+}
+
+// A custom field definition (a table-view column) on a board. Mirrors the
+// per-board Label pattern: defined once per board, referenced by cards through
+// the CardFieldValue join. position uses fractional indexing for column order.
+model BoardField {
+  id        String    @id @default(cuid())
+  boardId   String
+  name      String
+  type      FieldType
+  position  Float     // fractional index — column order
+  // For `select` fields only: [{ id, label, color }]. Null for other types.
+  options   Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  board  Board            @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  values CardFieldValue[]
+
+  @@index([boardId])
+  @@index([boardId, position])
+}
+
+// A single card's value for one custom field. Typed columns keep sort/filter
+// correct (vs a single stringified blob) and only one is populated per row,
+// chosen by the owning field's type. Cascades on both card and field delete,
+// so removing a column cleans up its values automatically.
+model CardFieldValue {
+  cardId        String
+  fieldId       String
+  valueText     String?   // text
+  valueNumber   Float?    // number
+  valueDate     DateTime? // date
+  valueUserId   String?   // person → User.id
+  valueOptionId String?   // select → option id within BoardField.options
+  updatedAt     DateTime  @updatedAt
+
+  card  Card       @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  field BoardField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, fieldId])
+  @@index([fieldId])
 }
 
 model ChecklistItem {

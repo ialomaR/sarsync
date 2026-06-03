@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { Role } from '@prisma/client';
+import { Role, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { loadMembership, canViewBoard, canEditBoard, canEditCard, canManageBoard, canSetBoardDepartment, hasDeptAccess } from './auth.js';
 import { positionAt } from './positions.js';
-import { serializeBoard, serializeLabel, serializeUserMini } from './serialize.js';
+import { serializeBoard, serializeLabel, serializeUserMini, serializeBoardField } from './serialize.js';
 import { logActivity } from './activity.js';
 import { notify, notifyCardMembers } from '../notifications/service.js';
 import { emitBoardEvent, actorSocketId } from '../realtime.js';
@@ -46,6 +46,34 @@ const UpdateBoard = z.object({
   hue: z.number().int().min(0).max(360).optional(),
   departmentId: z.string().nullable().optional(),
   teamId: z.string().nullable().optional(),
+});
+
+// Custom field (table-view column) schemas.
+const FIELD_TYPES = ['text', 'number', 'date', 'select', 'person'] as const;
+const FieldOption = z.object({
+  id: z.string().min(1).max(60),
+  label: z.string().min(1).max(120),
+  color: z.string().regex(HEX_COLOR).nullable().optional().default(null),
+});
+const CreateField = z.object({
+  name: z.string().min(1).max(80),
+  type: z.enum(FIELD_TYPES),
+  options: z.array(FieldOption).max(40).optional(),
+});
+const UpdateField = z.object({
+  name: z.string().min(1).max(80).optional(),
+  options: z.array(FieldOption).max(40).nullable().optional(),
+  // Reorder a column: target index among the board's fields.
+  toIndex: z.number().int().nonnegative().optional(),
+});
+// Set one card's value for one field. Exactly the column for the field's type
+// is honored server-side; the rest are cleared.
+const SetFieldValue = z.object({
+  text: z.string().max(2000).nullable().optional(),
+  number: z.number().nullable().optional(),
+  date: z.string().datetime().nullable().optional(),
+  userId: z.string().nullable().optional(),
+  optionId: z.string().nullable().optional(),
 });
 
 const CreateList = z.object({ title: z.string().min(1).max(120) });
@@ -162,6 +190,7 @@ export async function boardsRoutes(app: FastifyInstance) {
       where: { id: request.params.id },
       include: {
         createdBy: { select: { id: true, firstName: true, lastName: true, avatarColor: true } },
+        fields: true,
         lists: {
           where: { archivedAt: null },
           include: {
@@ -170,6 +199,7 @@ export async function boardsRoutes(app: FastifyInstance) {
               include: {
                 labels: { select: { labelId: true } },
                 members: { select: { userId: true } },
+                fieldValues: true,
                 _count: { select: { comments: true } },
                 checklist: { select: { done: true } },
               },
@@ -192,6 +222,8 @@ export async function boardsRoutes(app: FastifyInstance) {
       for (const c of l.cards) {
         c.members.forEach((m) => userIds.add(m.userId));
         c.labels.forEach((l) => labelIds.add(l.labelId));
+        // person-type field values reference a user — resolve them too
+        c.fieldValues.forEach((v) => { if (v.valueUserId) userIds.add(v.valueUserId); });
       }
 
     const [users, labels, star] = await Promise.all([
@@ -1155,6 +1187,158 @@ export async function boardsRoutes(app: FastifyInstance) {
   // Card label add/remove must verify the label belongs to the SAME board.
   // (Already validated in the existing /cards/:id/labels routes via label.workspaceId
   // — let me update those to check label.boardId === card.list.boardId)
+
+  // ── Custom fields (per-board table-view columns) ───────────────────────
+  // Mirrors the per-board label palette: defining a column needs board edit
+  // rights (same bar as labels); setting a value on a card is a content edit.
+
+  app.get<{ Params: { id: string } }>('/boards/:id/fields', async (request, reply) => {
+    const board = await prisma.board.findUnique({ where: { id: request.params.id } });
+    if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
+    await loadMembership(request, reply, board.workspaceId);
+    if (reply.sent) return;
+    if (!canViewBoard(request.membership!, board)) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
+
+    const fields = await prisma.boardField.findMany({
+      where: { boardId: board.id },
+      orderBy: { position: 'asc' },
+    });
+    return reply.send({ fields: fields.map(serializeBoardField) });
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/boards/:id/fields', async (request, reply) => {
+    const board = await prisma.board.findUnique({ where: { id: request.params.id } });
+    if (!board) return reply.code(404).send({ error: 'not_found', message: 'Board not found' });
+    await loadMembership(request, reply, board.workspaceId);
+    if (reply.sent) return;
+    if (!canEditBoard(request.membership!, board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit board' });
+
+    const parsed = CreateField.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: parsed.error.issues[0].message });
+
+    const siblings = await prisma.boardField.findMany({
+      where: { boardId: board.id },
+      select: { id: true, position: true },
+    });
+    const position = positionAt(siblings, siblings.length);
+    const field = await prisma.boardField.create({
+      data: {
+        boardId: board.id,
+        name: parsed.data.name,
+        type: parsed.data.type,
+        position,
+        // options only meaningful for select; store as given (or null)
+        options: parsed.data.type === 'select' ? (parsed.data.options ?? []) : undefined,
+      },
+    });
+    emitBoardEvent(board.id, 'field:added', { field: serializeBoardField(field) }, actorSocketId(request));
+    return reply.code(201).send(serializeBoardField(field));
+  });
+
+  app.patch<{ Params: { id: string }; Body: unknown }>('/fields/:id', async (request, reply) => {
+    const field = await prisma.boardField.findUnique({ where: { id: request.params.id }, include: { board: true } });
+    if (!field) return reply.code(404).send({ error: 'not_found', message: 'Field not found' });
+    await loadMembership(request, reply, field.board.workspaceId);
+    if (reply.sent) return;
+    if (!canEditBoard(request.membership!, field.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit board' });
+
+    const parsed = UpdateField.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: parsed.error.issues[0].message });
+
+    const data: Prisma.BoardFieldUpdateInput = {};
+    if (parsed.data.name !== undefined) data.name = parsed.data.name;
+    // options only apply to select fields; ignore otherwise
+    if (parsed.data.options !== undefined && field.type === 'select') {
+      data.options = (parsed.data.options ?? []) as Prisma.InputJsonValue;
+    }
+    if (parsed.data.toIndex !== undefined) {
+      const siblings = await prisma.boardField.findMany({
+        where: { boardId: field.boardId },
+        select: { id: true, position: true },
+      });
+      data.position = positionAt(siblings, parsed.data.toIndex, field.id);
+    }
+
+    const updated = await prisma.boardField.update({ where: { id: field.id }, data });
+    emitBoardEvent(field.boardId, 'field:updated', { field: serializeBoardField(updated) }, actorSocketId(request));
+    return reply.send(serializeBoardField(updated));
+  });
+
+  app.delete<{ Params: { id: string } }>('/fields/:id', async (request, reply) => {
+    const field = await prisma.boardField.findUnique({ where: { id: request.params.id }, include: { board: true } });
+    if (!field) return reply.code(404).send({ error: 'not_found', message: 'Field not found' });
+    await loadMembership(request, reply, field.board.workspaceId);
+    if (reply.sent) return;
+    if (!canEditBoard(request.membership!, field.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit board' });
+    // Cascade removes all CardFieldValue rows for this column.
+    await prisma.boardField.delete({ where: { id: field.id } });
+    emitBoardEvent(field.boardId, 'field:deleted', { id: field.id }, actorSocketId(request));
+    return reply.code(204).send();
+  });
+
+  // Set (or clear) one card's value for one field. Upserts the join row; the
+  // column written is chosen by the field's type, the rest are nulled out.
+  app.put<{ Params: { id: string; fieldId: string }; Body: unknown }>('/cards/:id/fields/:fieldId', async (request, reply) => {
+    const card = await prisma.card.findUnique({
+      where: { id: request.params.id },
+      include: { list: { include: { board: true } } },
+    });
+    if (!card) return reply.code(404).send({ error: 'not_found', message: 'Card not found' });
+    await loadMembership(request, reply, card.list.board.workspaceId);
+    if (reply.sent) return;
+    if (!canEditBoard(request.membership!, card.list.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit board' });
+
+    const field = await prisma.boardField.findUnique({ where: { id: request.params.fieldId } });
+    if (!field || field.boardId !== card.list.boardId) {
+      return reply.code(400).send({ error: 'invalid_field', message: 'Field does not belong to this board' });
+    }
+
+    const parsed = SetFieldValue.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: parsed.error.issues[0].message });
+    const b = parsed.data;
+
+    // Project the request onto the one column this field's type owns.
+    const value = {
+      valueText: null as string | null,
+      valueNumber: null as number | null,
+      valueDate: null as Date | null,
+      valueUserId: null as string | null,
+      valueOptionId: null as string | null,
+    };
+    switch (field.type) {
+      case 'text':   value.valueText = b.text ?? null; break;
+      case 'number': value.valueNumber = b.number ?? null; break;
+      case 'date':   value.valueDate = b.date ? new Date(b.date) : null; break;
+      case 'person': value.valueUserId = b.userId ?? null; break;
+      case 'select': {
+        // Validate the option exists in the field definition.
+        const opts = Array.isArray(field.options) ? (field.options as Array<{ id: string }>) : [];
+        if (b.optionId && !opts.some((o) => o.id === b.optionId)) {
+          return reply.code(400).send({ error: 'invalid_option', message: 'Unknown option for this field' });
+        }
+        value.valueOptionId = b.optionId ?? null;
+        break;
+      }
+    }
+
+    await prisma.cardFieldValue.upsert({
+      where: { cardId_fieldId: { cardId: card.id, fieldId: field.id } },
+      create: { cardId: card.id, fieldId: field.id, ...value },
+      update: value,
+    });
+    const wire = {
+      fieldId: field.id,
+      valueText: value.valueText,
+      valueNumber: value.valueNumber,
+      valueDate: value.valueDate ? value.valueDate.toISOString() : null,
+      valueUserId: value.valueUserId,
+      valueOptionId: value.valueOptionId,
+    };
+    emitBoardEvent(card.list.boardId, 'card:field_changed', {
+      cardId: card.id, value: wire,
+    }, actorSocketId(request));
+    return reply.send({ cardId: card.id, ...wire });
+  });
 
   // ── Activity feed ──────────────────────────────────────────────────────
 

@@ -32,6 +32,34 @@ export interface Team {
   leadId: string | null;
 }
 
+// Custom board fields (table-view columns).
+export type FieldType = 'text' | 'number' | 'date' | 'select' | 'person';
+
+export interface FieldOption {
+  id: string;
+  label: string;
+  color: string | null;
+}
+
+export interface BoardField {
+  id: string;
+  name: string;
+  type: FieldType;
+  position: number;
+  options: FieldOption[] | null;  // populated for `select`, null otherwise
+}
+
+// A card's value for one custom field. Exactly one `value*` is meaningful,
+// selected by the owning field's type (text/number/date/select/person).
+export interface CardFieldValue {
+  fieldId: string;
+  valueText: string | null;
+  valueNumber: number | null;
+  valueDate: string | null;     // ISO
+  valueUserId: string | null;   // person
+  valueOptionId: string | null; // select
+}
+
 export interface Card {
   id: string;
   listId: string;
@@ -47,6 +75,7 @@ export interface Card {
   checklistDone: number;
   checklistTotal: number;
   commentCount: number;
+  fieldValues: CardFieldValue[];
 }
 
 export interface List {
@@ -65,6 +94,7 @@ export interface Board {
   starred: boolean;
   departmentId: string | null;
   teamId: string | null;
+  fields: BoardField[];
   lists: List[];
 }
 

@@ -23,6 +23,14 @@ export function formatRelative(iso) {
   return dateFmt.format(new Date(iso));
 }
 
+// Custom-field values arrive as an array; key them by fieldId for O(1) lookup
+// in the table view and card modal.
+export function fieldValuesById(arr) {
+  const out = {};
+  (arr || []).forEach((v) => { out[v.fieldId] = v; });
+  return out;
+}
+
 export function normalizeCard(c) {
   return {
     id: c.id,
@@ -38,6 +46,7 @@ export function normalizeCard(c) {
     cover: c.coverUrl
       ? { url: c.coverUrl }
       : c.coverHue != null ? { hue: c.coverHue, label: c.coverLabel || '' } : null,
+    fieldValues: fieldValuesById(c.fieldValues),
   };
 }
 
@@ -64,6 +73,8 @@ export function normalizeBoard(b) {
     workspaceId: b.workspaceId,
     departmentId: b.departmentId,
     teamId: b.teamId,
+    fields: (b.fields || []).slice().sort((a, z) => a.position - z.position),
+    fieldsById: Object.fromEntries((b.fields || []).map((f) => [f.id, f])),
     lists: (b.lists || []).map(normalizeList),
     peopleById: b.peopleById || {},
     labelsById: b.labelsById || {},

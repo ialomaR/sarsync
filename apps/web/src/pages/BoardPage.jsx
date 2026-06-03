@@ -52,7 +52,7 @@ export function BoardPage() {
 
   return (
     <AppShell board={board.board ? { title: board.board.title } : null}>
-      <BoardDataProvider peopleById={board.peopleById} labelsById={board.labelsById}>
+      <BoardDataProvider peopleById={board.peopleById} labelsById={board.labelsById} fieldsById={board.fieldsById}>
         {board.status === 'loading' && (
           <LoadingScreen theme={theme} rtl={s.rtl} />
         )}
@@ -77,6 +77,10 @@ export function BoardPage() {
               onRemoveCover={canManage ? board.removeCover : null}
               lists={board.lists}
               onAddCard={canEdit ? board.addCard : null}
+              fields={board.fields}
+              onCreateField={canEdit ? board.createField : null}
+              onUpdateField={canEdit ? board.updateField : null}
+              onDeleteField={canEdit ? board.deleteField : null}
               filterText={filterText}
               onFilterChange={setFilterText} />
             <DragProvider
@@ -98,6 +102,9 @@ export function BoardPage() {
                 canEdit={canEdit}
                 membership={m}
                 boardDepartmentId={board.board.departmentId}
+                fields={board.fields}
+                fieldValues={found.card.fieldValues}
+                onSetFieldValue={canEdit ? (fieldId, body) => board.setCardFieldValue(found.card.id, fieldId, body) : null}
                 onClose={closeCard}
                 onCardChanged={(patch) => board.patchLocalCard(found.card.id, patch)}
                 onRefetchBoard={board.refetch} />

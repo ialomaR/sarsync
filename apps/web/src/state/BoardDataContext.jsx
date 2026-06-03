@@ -6,11 +6,12 @@ import React from 'react';
 
 const Ctx = React.createContext(null);
 
-export function BoardDataProvider({ peopleById, labelsById, children }) {
+export function BoardDataProvider({ peopleById, labelsById, fieldsById, children }) {
   const value = React.useMemo(() => ({
     peopleById: peopleById || {},
     labelsById: labelsById || {},
-  }), [peopleById, labelsById]);
+    fieldsById: fieldsById || {},
+  }), [peopleById, labelsById, fieldsById]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
