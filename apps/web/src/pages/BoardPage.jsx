@@ -2,6 +2,7 @@ import React from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { AppShell } from '../kanban/AppShell.jsx';
 import { BoardSubBar, KanbanBoard } from '../kanban/KanbanBoard.jsx';
+import { TableView } from '../kanban/TableView.jsx';
 import { CardModal } from './CardModal.jsx';
 import { useSettings } from '../state/SettingsContext.jsx';
 import { useAuth } from '../state/AuthContext.jsx';
@@ -27,6 +28,21 @@ export function BoardPage() {
   const canDelete = canDeleteBoard(m);
   const canMoveDept = canSetBoardDepartment(m, board.board);
   const found = cardId && !cardId.startsWith('tmp-') ? board.findCard(cardId) : null;
+
+  // Kanban vs Table view — remembered per board so a user's choice sticks.
+  const viewKey = `sarsync:boardView:${id}`;
+  const [viewMode, setViewMode] = React.useState(() => {
+    try { return localStorage.getItem(viewKey) || 'kanban'; } catch { return 'kanban'; }
+  });
+  React.useEffect(() => {
+    setViewMode((prev) => {
+      try { return localStorage.getItem(viewKey) || 'kanban'; } catch { return prev; }
+    });
+  }, [viewKey]);
+  const changeView = React.useCallback((mode) => {
+    setViewMode(mode);
+    try { localStorage.setItem(viewKey, mode); } catch { /* ignore */ }
+  }, [viewKey]);
 
   const [filterText, setFilterText] = React.useState('');
   const visibleLists = React.useMemo(() => {
@@ -81,20 +97,37 @@ export function BoardPage() {
               onCreateField={canEdit ? board.createField : null}
               onUpdateField={canEdit ? board.updateField : null}
               onDeleteField={canEdit ? board.deleteField : null}
+              viewMode={viewMode}
+              onViewModeChange={changeView}
               filterText={filterText}
               onFilterChange={setFilterText} />
-            <DragProvider
-              onMove={canEdit ? board.moveCard : () => {}}
-              onMoveList={canEdit ? board.moveList : () => {}}>
-              <KanbanBoard theme={theme} lists={visibleLists} density={s.density}
-                showAvatars={s.showAvatars} rtl={s.rtl}
+            {viewMode === 'table' ? (
+              <TableView theme={theme} rtl={s.rtl}
+                lists={visibleLists}
+                fields={board.fields}
+                peopleById={board.peopleById}
+                workspaceId={board.board.workspaceId}
                 canEdit={canEdit}
                 onCardClick={openCard}
-                onAddCard={canEdit ? board.addCard : null}
-                onAddList={canEdit ? board.addList : null}
-                onRenameList={canEdit ? board.renameList : null}
-                onDeleteList={canEdit ? board.deleteList : null} />
-            </DragProvider>
+                onSetFieldValue={canEdit ? board.setCardFieldValue : null}
+                onMoveCard={canEdit ? ((cardId2, toListId) => {
+                  const target = board.lists.find((l) => l.id === toListId);
+                  board.moveCard(cardId2, toListId, target ? target.cards.length : 0);
+                }) : null} />
+            ) : (
+              <DragProvider
+                onMove={canEdit ? board.moveCard : () => {}}
+                onMoveList={canEdit ? board.moveList : () => {}}>
+                <KanbanBoard theme={theme} lists={visibleLists} density={s.density}
+                  showAvatars={s.showAvatars} rtl={s.rtl}
+                  canEdit={canEdit}
+                  onCardClick={openCard}
+                  onAddCard={canEdit ? board.addCard : null}
+                  onAddList={canEdit ? board.addList : null}
+                  onRenameList={canEdit ? board.renameList : null}
+                  onDeleteList={canEdit ? board.deleteList : null} />
+              </DragProvider>
+            )}
             {found && (
               <CardModal theme={theme} rtl={s.rtl}
                 cardId={found.card.id} listTitle={found.list.title}

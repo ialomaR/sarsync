@@ -10,7 +10,7 @@ import { DragCtx } from '../state/board-state.jsx';
 import { api } from '../lib/api.js';
 import { FieldsManagerModal } from './FieldsManager.jsx';
 
-export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, canMoveDept, membership, onMoveDepartment, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange, fields = [], onCreateField, onUpdateField, onDeleteField }) {
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, canMoveDept, membership, onMoveDepartment, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange, fields = [], onCreateField, onUpdateField, onDeleteField, viewMode = 'kanban', onViewModeChange }) {
   const ctx = useBoardData();
   const navigate = useNavigate();
   const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
@@ -133,6 +133,9 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {onViewModeChange && (
+          <ViewSwitch theme={theme} rtl={rtl} value={viewMode} onChange={onViewModeChange} />
+        )}
         {showAvatars && memberIds.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', marginInlineEnd: 6 }}>
             <AvatarStack ids={memberIds} size={26} max={5} ringColor={theme.boardBg} />
@@ -493,6 +496,33 @@ function MenuItem({ theme, onClick, danger, children }) {
     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
       {children}
     </button>
+  );
+}
+
+// Segmented control switching the board between Kanban and Table views.
+function ViewSwitch({ theme, rtl, value, onChange }) {
+  const opts = [
+    { id: 'kanban', label: rtl ? 'لوحة' : 'Board' },
+    { id: 'table', label: rtl ? 'جدول' : 'Table' },
+  ];
+  return (
+    <div style={{
+      display: 'flex', gap: 2, padding: 2, borderRadius: 7,
+      background: theme.surface2, border: `.5px solid ${theme.border}`,
+    }}>
+      {opts.map((o) => {
+        const active = value === o.id;
+        return (
+          <button key={o.id} onClick={() => onChange(o.id)} style={{
+            padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer',
+            fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+            background: active ? theme.surface : 'transparent',
+            color: active ? theme.text : theme.muted,
+            boxShadow: active ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+          }}>{o.label}</button>
+        );
+      })}
+    </div>
   );
 }
 
