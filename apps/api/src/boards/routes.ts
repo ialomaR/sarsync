@@ -297,12 +297,16 @@ export async function boardsRoutes(app: FastifyInstance) {
       select: { id: true, position: true },
     });
     const position = positionAt(cards, cards.length);
+    // The creator is auto-assigned as a member so their work shows up under the
+    // "by assignee" filter by default. They can remove themselves afterward.
     const card = await prisma.card.create({
       data: {
         listId: list.id, title: parsed.data.title, position,
         createdById: request.userId,
+        members: { create: { userId: request.userId! } },
       },
     });
+    const memberIds = [request.userId!];
     await logActivity({
       boardId: list.boardId, actorId: request.userId!,
       verb: 'card_created', targetType: 'card', targetId: card.id,
@@ -313,13 +317,13 @@ export async function boardsRoutes(app: FastifyInstance) {
       card: {
         id: card.id, listId: card.listId, title: card.title, position: card.position,
         due: null, orderedBy: null, coverHue: null, coverLabel: null,
-        labelIds: [], memberIds: [], checklistDone: 0, checklistTotal: 0, commentCount: 0,
+        labelIds: [], memberIds, checklistDone: 0, checklistTotal: 0, commentCount: 0,
       },
     }, actorSocketId(request));
     return reply.code(201).send({
       id: card.id, listId: card.listId, title: card.title,
       position: card.position, due: null, orderedBy: null, coverHue: null, coverLabel: null,
-      labelIds: [], memberIds: [],
+      labelIds: [], memberIds,
       checklistDone: 0, checklistTotal: 0, commentCount: 0,
     });
   });

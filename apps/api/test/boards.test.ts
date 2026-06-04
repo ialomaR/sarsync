@@ -383,4 +383,30 @@ describe('boards + permissions', () => {
     });
     expect(move.statusCode).toBe(403);
   });
+
+  it('a new card auto-assigns its creator as a member', async () => {
+    const { app, admin, dept } = await adminWithDept();
+    const boardId = (await app.inject({
+      method: 'POST', url: `/workspaces/${admin.membership.workspaceId}/boards`,
+      headers: authHeader(admin.accessToken),
+      payload: { title: 'Tracker', departmentId: dept.id },
+    })).json().id;
+    const board = (await app.inject({
+      method: 'GET', url: `/boards/${boardId}`, headers: authHeader(admin.accessToken),
+    })).json();
+
+    const card = (await app.inject({
+      method: 'POST', url: `/lists/${board.lists[0].id}/cards`,
+      headers: authHeader(admin.accessToken),
+      payload: { title: 'My task' },
+    })).json();
+    expect(card.memberIds).toContain(admin.id);
+
+    // And it surfaces on the board fetch too.
+    const after = (await app.inject({
+      method: 'GET', url: `/boards/${boardId}`, headers: authHeader(admin.accessToken),
+    })).json();
+    const fetched = after.lists[0].cards.find((c: { id: string }) => c.id === card.id);
+    expect(fetched.memberIds).toContain(admin.id);
+  });
 });

@@ -2,6 +2,7 @@ import React from 'react';
 import { api, getAccessToken } from '../lib/api.js';
 import { normalizeBoard, normalizeCard, normalizeList, formatDueDate } from '../lib/normalize.js';
 import { subscribeSocket, emit } from '../lib/socket.js';
+import { useAuth } from './AuthContext.jsx';
 
 // Project a /cards/:id detail response down to the chip-shape that the
 // board view stores. Position + listId stay where they are — those move
@@ -30,6 +31,19 @@ function chipFromDetail(detail, prev) {
 // optimistic UI updates.
 
 export function useBoardApi(boardId) {
+  const auth = useAuth();
+  // The signed-in user, in the peopleById mini-shape — used to optimistically
+  // self-assign on card creation (and render the avatar before a refetch).
+  const myMini = React.useMemo(() => {
+    const u = auth?.user;
+    if (!u) return null;
+    return {
+      id: u.id, firstName: u.firstName, lastName: u.lastName,
+      initials: (u.firstName?.[0] || '') + (u.lastName?.[0] || ''),
+      name: `${u.firstName} ${u.lastName}`.trim(), color: u.avatarColor,
+    };
+  }, [auth?.user]);
+
   const [state, setState] = React.useState({
     status: 'loading',  // 'loading' | 'ready' | 'error'
     error: null,
@@ -297,12 +311,18 @@ export function useBoardApi(boardId) {
   }, []);
 
   const addCard = React.useCallback(async (listId, title) => {
-    // Tentative card with temp id
+    // Tentative card with temp id. The server auto-assigns the creator, so
+    // mirror that optimistically (members + peopleById) for an instant avatar
+    // and a correct "by assignee" filter without waiting for a refetch.
     const tempId = 'tmp-' + Date.now();
+    const myMembers = myMini ? [myMini.id] : [];
     setState((s) => ({
       ...s,
+      peopleById: myMini && !s.peopleById[myMini.id]
+        ? { ...s.peopleById, [myMini.id]: myMini }
+        : s.peopleById,
       lists: s.lists.map((l) => l.id === listId
-        ? { ...l, cards: [...l.cards, { id: tempId, listId, title, labels: [], members: [], comments: 0 }] }
+        ? { ...l, cards: [...l.cards, { id: tempId, listId, title, labels: [], members: myMembers, comments: 0 }] }
         : l),
     }));
     try {
@@ -324,7 +344,7 @@ export function useBoardApi(boardId) {
       }));
       throw err;
     }
-  }, []);
+  }, [myMini]);
 
   const addList = React.useCallback(async (title) => {
     if (!boardId) return;
