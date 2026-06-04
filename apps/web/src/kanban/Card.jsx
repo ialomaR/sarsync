@@ -4,7 +4,7 @@ import { CoverPlaceholder, LabelChip, LabelStripe } from '../ui/Label.jsx';
 import { AvatarStack } from '../ui/Avatar.jsx';
 import { Icon } from '../ui/Icon.jsx';
 
-export function Card({ card, theme, density, showAvatars, onClick, listId, index, canDrag = true }) {
+export function Card({ card, theme, density, showAvatars, onClick, listId, index, canDrag = true, rtl }) {
   const [hover, setHover] = React.useState(false);
   const dnd = React.useContext(DragCtx);
   const compact = density === 'compact';
@@ -91,14 +91,16 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
           }}>{card.title || '(بلا عنوان)'}</div>
           {card.orderedBy && (
             <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
+              display: 'inline-flex', alignItems: 'baseline', gap: 5,
               alignSelf: 'flex-start', maxWidth: '100%',
-              color: theme.muted, fontSize: 11.5, fontWeight: 500,
+              fontSize: 11.5, fontWeight: 500,
               background: theme.name === 'dark' ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.045)',
               padding: '2px 7px', borderRadius: 5,
             }}>
-              <Icon.user size={11} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: theme.accent, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                {rtl ? 'الطلب من:' : 'Order By:'}
+              </span>
+              <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {card.orderedBy}
               </span>
             </div>

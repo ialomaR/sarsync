@@ -118,14 +118,22 @@ function PivotCell({ theme, rtl, canEdit, card, onOpen, onRename }) {
 
   return (
     <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 4, padding: '8px 10px' }}>
-      <div
-        onClick={() => canEdit && setEditing(true)}
-        title={canEdit ? (rtl ? 'انقر للتعديل' : 'Click to edit') : undefined}
-        style={{
-          flex: 1, minWidth: 0, fontSize: 12.5, lineHeight: 1.45,
-          color: theme.text, cursor: canEdit ? 'text' : 'default',
-          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-        }}>{card.title}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          onClick={() => canEdit && setEditing(true)}
+          title={canEdit ? (rtl ? 'انقر للتعديل' : 'Click to edit') : undefined}
+          style={{
+            fontSize: 12.5, lineHeight: 1.45,
+            color: theme.text, cursor: canEdit ? 'text' : 'default',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          }}>{card.title}</div>
+        {card.orderedBy && (
+          <div style={{ marginTop: 4, fontSize: 11, fontWeight: 500, lineHeight: 1.3 }}>
+            <span style={{ color: theme.accent, fontWeight: 700 }}>{rtl ? 'الطلب من: ' : 'Order By: '}</span>
+            <span style={{ color: theme.muted }}>{card.orderedBy}</span>
+          </div>
+        )}
+      </div>
       <button onClick={onOpen} title={rtl ? 'فتح البطاقة' : 'Open card'} style={{
         flexShrink: 0, width: 22, height: 22, borderRadius: 4, lineHeight: 1,
         background: 'transparent', color: theme.muted,

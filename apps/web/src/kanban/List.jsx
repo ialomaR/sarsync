@@ -215,7 +215,7 @@ export function List({ list, index, theme, density, showAvatars, canEdit, onCard
         }}>
         {list.cards.map((c, i) => (
           <Card key={c.id} card={c} theme={theme} density={density} listId={list.id} index={i}
-            canDrag={canEdit}
+            canDrag={canEdit} rtl={rtl}
             showAvatars={showAvatars} onClick={onCardClick} />
         ))}
         {dragOverEnd && dnd.drag.fromListId !== list.id && (
