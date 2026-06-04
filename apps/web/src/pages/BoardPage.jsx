@@ -45,14 +45,24 @@ export function BoardPage() {
   }, [viewKey]);
 
   const [filterText, setFilterText] = React.useState('');
+  const [filterMemberId, setFilterMemberId] = React.useState(null);
   const visibleLists = React.useMemo(() => {
     const q = filterText.trim().toLowerCase();
-    if (!q) return board.lists;
+    if (!q && !filterMemberId) return board.lists;
     return board.lists.map((l) => ({
       ...l,
-      cards: l.cards.filter((c) => (c.title || '').toLowerCase().includes(q)),
+      cards: l.cards.filter((c) =>
+        (!q || (c.title || '').toLowerCase().includes(q)) &&
+        (!filterMemberId || (c.members || []).includes(filterMemberId))),
     }));
-  }, [board.lists, filterText]);
+  }, [board.lists, filterText, filterMemberId]);
+
+  // People assigned somewhere on this board — the set worth filtering by.
+  const people = React.useMemo(
+    () => Object.values(board.peopleById || {})
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+    [board.peopleById],
+  );
 
   const openCard = (cid) => {
     if (cid.startsWith('tmp-')) return;
@@ -100,7 +110,10 @@ export function BoardPage() {
               viewMode={viewMode}
               onViewModeChange={changeView}
               filterText={filterText}
-              onFilterChange={setFilterText} />
+              onFilterChange={setFilterText}
+              people={people}
+              filterMemberId={filterMemberId}
+              onFilterMemberChange={setFilterMemberId} />
             {viewMode === 'table' ? (
               <TableView theme={theme} rtl={s.rtl}
                 lists={visibleLists}

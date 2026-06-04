@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { List } from './List.jsx';
 import { Icon } from '../ui/Icon.jsx';
-import { AvatarStack } from '../ui/Avatar.jsx';
+import { Avatar, AvatarStack } from '../ui/Avatar.jsx';
 import { useBoardData } from '../state/BoardDataContext.jsx';
 import { iconBtn, pillBtn } from '../ui/theme.js';
 import { Popover } from '../ui/Popover.jsx';
@@ -10,7 +10,7 @@ import { DragCtx } from '../state/board-state.jsx';
 import { api } from '../lib/api.js';
 import { FieldsManagerModal } from './FieldsManager.jsx';
 
-export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, canMoveDept, membership, onMoveDepartment, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange, fields = [], onCreateField, onUpdateField, onDeleteField, viewMode = 'kanban', onViewModeChange }) {
+export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage, canMoveDept, membership, onMoveDepartment, onUpdateBoard, onToggleStar, onArchiveBoard, onRestoreBoard, onDeleteBoard, canDelete, onUploadCover, onRemoveCover, lists, onAddCard, filterText, onFilterChange, fields = [], onCreateField, onUpdateField, onDeleteField, viewMode = 'kanban', onViewModeChange, people = [], filterMemberId = null, onFilterMemberChange }) {
   const ctx = useBoardData();
   const navigate = useNavigate();
   const memberIds = ctx?.peopleById ? Object.keys(ctx.peopleById) : [];
@@ -143,10 +143,10 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
         )}
         <button ref={filterRef} onClick={() => setFilterOpen((v) => !v)} style={{
           ...pillBtn(theme),
-          ...(filterText ? { background: theme.accentSoft, color: theme.accent, borderColor: theme.accent } : null),
+          ...((filterText || filterMemberId) ? { background: theme.accentSoft, color: theme.accent, borderColor: theme.accent } : null),
         }}>
           <Icon.filter /> {rtl ? 'تصفية' : 'Filter'}
-          {filterText && <span style={{ fontSize: 10, fontWeight: 700 }}>·</span>}
+          {(filterText || filterMemberId) && <span style={{ fontSize: 10, fontWeight: 700 }}>·</span>}
         </button>
         <Popover anchorRef={filterRef} open={filterOpen} onClose={() => setFilterOpen(false)} theme={theme} width={260} align="end">
           <div style={{ padding: 4 }}>
@@ -159,9 +159,46 @@ export function BoardSubBar({ theme, board, showAvatars, rtl, canEdit, canManage
                 border: `.5px solid ${theme.border}`,
                 fontSize: 13, fontFamily: 'inherit', outline: 'none',
               }} />
-            {filterText && (
-              <button onClick={() => onFilterChange?.('')} style={{
-                marginTop: 6, width: '100%', padding: '6px 8px', borderRadius: 5,
+
+            {onFilterMemberChange && people.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{
+                  fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
+                  color: theme.mutedDim, textTransform: 'uppercase',
+                  padding: '0 4px 6px',
+                }}>{rtl ? 'حسب الموظف' : 'By assignee'}</div>
+                <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {people.map((p) => {
+                    const active = filterMemberId === p.id;
+                    return (
+                      <button key={p.id}
+                        onClick={() => onFilterMemberChange(active ? null : p.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          width: '100%', padding: '6px 8px', borderRadius: 5,
+                          background: active ? theme.accentSoft : 'transparent',
+                          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                          textAlign: 'start',
+                        }}
+                        onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = theme.surface2; }}
+                        onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
+                        <Avatar id={p.id} size={22} />
+                        <span style={{
+                          flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: active ? 600 : 500,
+                          color: active ? theme.accent : theme.text,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>{p.name}</span>
+                        {active && <Icon.check size={14} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {(filterText || filterMemberId) && (
+              <button onClick={() => { onFilterChange?.(''); onFilterMemberChange?.(null); }} style={{
+                marginTop: 8, width: '100%', padding: '6px 8px', borderRadius: 5,
                 background: 'transparent', border: `.5px solid ${theme.border}`,
                 color: theme.muted, fontSize: 12, fontWeight: 500,
                 cursor: 'pointer', fontFamily: 'inherit',
