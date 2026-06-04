@@ -129,8 +129,8 @@ function PivotCell({ theme, rtl, canEdit, card, onOpen, onRename }) {
           }}>{card.title}</div>
         {card.orderedBy && (
           <div style={{ marginTop: 4, fontSize: 11, fontWeight: 500, lineHeight: 1.3 }}>
-            <span style={{ color: theme.accent, fontWeight: 700 }}>{rtl ? 'الطلب من: ' : 'Order By: '}</span>
-            <span style={{ color: theme.muted }}>{card.orderedBy}</span>
+            <span style={{ color: theme.muted, fontWeight: 500 }}>{rtl ? 'الطلب من: ' : 'Order By: '}</span>
+            <span style={{ color: theme.accent, fontWeight: 700 }}>{card.orderedBy}</span>
           </div>
         )}
       </div>

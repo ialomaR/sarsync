@@ -97,10 +97,10 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
               background: theme.name === 'dark' ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.045)',
               padding: '2px 7px', borderRadius: 5,
             }}>
-              <span style={{ color: theme.accent, fontWeight: 700, whiteSpace: 'nowrap' }}>
+              <span style={{ color: theme.muted, fontWeight: 500, whiteSpace: 'nowrap' }}>
                 {rtl ? 'الطلب من:' : 'Order By:'}
               </span>
-              <span style={{ color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: theme.accent, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {card.orderedBy}
               </span>
             </div>
