@@ -372,6 +372,37 @@ export function useBoardApi(boardId) {
     }
   }, []);
 
+  // Inline title edit (used by the table view's cells). Optimistic; the server
+  // emits card:updated so other viewers reconcile.
+  const renameCard = React.useCallback(async (cardId, title) => {
+    const t = (title || '').trim();
+    if (!t) return;
+    let prev;
+    setState((s) => ({
+      ...s,
+      lists: s.lists.map((l) => ({
+        ...l,
+        cards: l.cards.map((c) => {
+          if (c.id !== cardId) return c;
+          prev = c.title;
+          return { ...c, title: t };
+        }),
+      })),
+    }));
+    try {
+      await api(`/cards/${cardId}`, { method: 'PATCH', body: { title: t } });
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        lists: s.lists.map((l) => ({
+          ...l,
+          cards: l.cards.map((c) => c.id === cardId ? { ...c, title: prev } : c),
+        })),
+      }));
+      throw err;
+    }
+  }, []);
+
   const updateBoard = React.useCallback(async (patch) => {
     if (!state.board) return;
     setState((s) => ({ ...s, board: { ...s.board, ...patch } }));
@@ -512,7 +543,7 @@ export function useBoardApi(boardId) {
     fields: state.fields,
     fieldsById: state.fieldsById,
     moveCard, moveList, addCard, addList, findCard, patchLocalCard, refetch,
-    renameList, deleteList,
+    renameList, deleteList, renameCard,
     updateBoard, archiveBoard, restoreBoard, deleteBoard, toggleStar,
     uploadCover, removeCover,
     createField, updateField, deleteField, setCardFieldValue,

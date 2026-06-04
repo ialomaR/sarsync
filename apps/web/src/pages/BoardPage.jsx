@@ -104,16 +104,9 @@ export function BoardPage() {
             {viewMode === 'table' ? (
               <TableView theme={theme} rtl={s.rtl}
                 lists={visibleLists}
-                fields={board.fields}
-                peopleById={board.peopleById}
-                workspaceId={board.board.workspaceId}
                 canEdit={canEdit}
                 onCardClick={openCard}
-                onSetFieldValue={canEdit ? board.setCardFieldValue : null}
-                onMoveCard={canEdit ? ((cardId2, toListId) => {
-                  const target = board.lists.find((l) => l.id === toListId);
-                  board.moveCard(cardId2, toListId, target ? target.cards.length : 0);
-                }) : null} />
+                onRenameCard={canEdit ? board.renameCard : null} />
             ) : (
               <DragProvider
                 onMove={canEdit ? board.moveCard : () => {}}
