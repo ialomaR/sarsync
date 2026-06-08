@@ -11,7 +11,7 @@ export type Verb =
   | 'label_added' | 'label_removed'
   | 'comment_added'
   | 'checklist_added' | 'checklist_completed' | 'checklist_uncompleted'
-  | 'list_created' | 'list_renamed' | 'list_archived'
+  | 'list_created' | 'list_renamed' | 'list_archived' | 'list_deleted'
   | 'board_created' | 'board_archived' | 'board_restored' | 'board_moved';
 
 export async function logActivity(args: {

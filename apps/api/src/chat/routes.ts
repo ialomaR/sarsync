@@ -9,6 +9,8 @@ import { emitDeptEvent, actorSocketId } from '../realtime.js';
 import { notify } from '../notifications/service.js';
 import { optimizeImageBuffer, generateThumbBuffer } from '../lib/optimize.js';
 import { putObject, getObjectBuffer, deleteObject, copyObject } from '../lib/storage.js';
+import { safeDownloadHeaders } from '../lib/download.js';
+import { parseDateParam } from '../lib/dates.js';
 
 // Markup convention: @[Display Name](userId)
 // Only IDs are trusted on the server; the display name is just for rendering.
@@ -30,6 +32,10 @@ const AUTHOR_MUTATION_WINDOW_MS = 2 * 60 * 1000;
 const BLOCKED_EXTS = new Set([
   '.exe', '.bat', '.cmd', '.scr', '.vbs', '.ps1', '.msi', '.app', '.dmg',
   '.com', '.pif', '.jar', '.sh',
+  // Active web content — would execute as script if ever rendered on the API
+  // origin. Downloads are already forced to attachment (see lib/download.ts);
+  // blocking upload is defense in depth.
+  '.html', '.htm', '.xhtml', '.shtml', '.svg', '.xml',
 ]);
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif']);
@@ -121,8 +127,9 @@ export async function chatRoutes(app: FastifyInstance) {
       const v = await deptMembership(request.userId!, request.params.id);
       if (!v) return reply.code(403).send({ error: 'forbidden', message: 'No access' });
 
-      const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
-      const before = request.query.before ? new Date(request.query.before) : null;
+      const parsedLimit = parseInt(request.query.limit || '50', 10);
+      const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 100) : 50;
+      const before = parseDateParam(request.query.before) ?? null;
 
       const rows = await prisma.chatMessage.findMany({
         where: {
@@ -564,9 +571,10 @@ export async function chatRoutes(app: FastifyInstance) {
       }
       const buffer = await getObjectBuffer(att.s3Key);
       if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'File no longer in storage' });
+      const dl = safeDownloadHeaders(att.mimeType, att.filename);
       return reply
-        .header('content-type', att.mimeType)
-        .header('content-disposition', `inline; filename="${encodeURIComponent(att.filename)}"`)
+        .header('content-type', dl.contentType)
+        .header('content-disposition', dl.contentDisposition)
         .send(buffer);
     });
 

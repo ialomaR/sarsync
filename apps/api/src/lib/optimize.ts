@@ -14,6 +14,11 @@ const OPTIMIZABLE_MIMES = new Set([
 const MAX_EDGE = 1920;        // covers desktop retina; phones serve smaller via thumbs
 const WEBP_QUALITY = 82;      // sweet spot for photos: ~70% smaller than jpeg q90
 
+// Cap decoded pixels to defuse decompression bombs — a small (under the byte
+// cap) but absurdly high-resolution image would otherwise force sharp to
+// allocate a huge pixel buffer. 24MP comfortably covers real photos.
+const MAX_INPUT_PIXELS = 24_000_000;
+
 const THUMB_EDGE = 480;       // for chat / media grid previews
 const THUMB_QUALITY = 78;
 
@@ -31,7 +36,7 @@ export function isOptimizable(mime: string): boolean {
 // isn't an image we want to touch (caller stores the original as-is).
 export async function optimizeImageBuffer(input: Buffer, mime: string): Promise<OptimizedImage | null> {
   if (!isOptimizable(mime)) return null;
-  const buffer = await sharp(input)
+  const buffer = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
     .rotate() // honor EXIF orientation BEFORE the resize
     .resize({ width: MAX_EDGE, height: MAX_EDGE, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: WEBP_QUALITY })
@@ -50,7 +55,7 @@ export async function optimizeImageBuffer(input: Buffer, mime: string): Promise<
 // optimized original. Skips non-images.
 export async function generateThumbBuffer(input: Buffer, mime: string): Promise<Buffer | null> {
   if (!isOptimizable(mime)) return null;
-  return sharp(input)
+  return sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
     .rotate()
     .resize({ width: THUMB_EDGE, height: THUMB_EDGE, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: THUMB_QUALITY })

@@ -6,20 +6,29 @@ import { prisma } from '../db.js';
 export interface AccessTokenPayload {
   sub: string;       // user id
   email: string;
+  // Discriminates a real access token from other JWTs we sign with the same
+  // secret (notably the 2FA challenge token, which carries purpose:'2fa').
+  // verifyAccessToken rejects any token missing typ:'access', so a challenge
+  // token can never be replayed as a bearer credential.
+  typ: 'access';
   iat?: number;
   exp?: number;
 }
 
 export function signAccessToken(user: { id: string; email: string }): string {
   return jwt.sign(
-    { sub: user.id, email: user.email } satisfies AccessTokenPayload,
+    { sub: user.id, email: user.email, typ: 'access' } satisfies AccessTokenPayload,
     config.JWT_SECRET,
-    { expiresIn: config.JWT_ACCESS_TTL as jwt.SignOptions['expiresIn'] },
+    { expiresIn: config.JWT_ACCESS_TTL as jwt.SignOptions['expiresIn'], algorithm: 'HS256' },
   );
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {
-  return jwt.verify(token, config.JWT_SECRET) as AccessTokenPayload;
+  const payload = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as AccessTokenPayload;
+  // Reject anything that isn't an access token (e.g. the 2FA challenge token,
+  // which is signed with the same secret but carries purpose:'2fa' / no typ).
+  if (payload.typ !== 'access') throw new Error('invalid_token_type');
+  return payload;
 }
 
 // Refresh tokens: opaque random strings, hashed in DB.

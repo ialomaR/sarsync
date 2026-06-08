@@ -8,6 +8,7 @@ import { logActivity } from './activity.js';
 import { emitBoardEvent, actorSocketId } from '../realtime.js';
 import { optimizeImageBuffer } from '../lib/optimize.js';
 import { putObject, getObjectBuffer, deleteObject, copyObject } from '../lib/storage.js';
+import { safeDownloadHeaders } from '../lib/download.js';
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50 MB — leaves room for short videos
 
@@ -184,9 +185,10 @@ export async function attachmentRoutes(app: FastifyInstance) {
     const buffer = await getObjectBuffer(att.s3Key);
     if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'File no longer in storage' });
 
+    const dl = safeDownloadHeaders(att.mimeType, att.filename);
     return reply
-      .header('content-type', att.mimeType)
-      .header('content-disposition', `inline; filename="${encodeURIComponent(att.filename)}"`)
+      .header('content-type', dl.contentType)
+      .header('content-disposition', dl.contentDisposition)
       .send(buffer);
   });
 
@@ -330,8 +332,10 @@ export async function attachmentRoutes(app: FastifyInstance) {
 
     const buffer = await getObjectBuffer(board.coverImagePath);
     if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'Cover no longer in storage' });
+    const dl = safeDownloadHeaders(board.coverImageMime, 'cover');
     return reply
-      .header('content-type', board.coverImageMime || 'application/octet-stream')
+      .header('content-type', dl.contentType)
+      .header('content-disposition', dl.contentDisposition)
       .header('cache-control', 'private, max-age=300')
       .send(buffer);
   });

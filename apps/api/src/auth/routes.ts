@@ -19,6 +19,12 @@ import { requireAuth } from './middleware.js';
 import { toAuthUser, loadMembershipSummaries } from './serialize.js';
 import QRCode from 'qrcode';
 import { sendEmail, brandedHtml } from '../lib/email.js';
+import { createRateLimiter } from '../lib/rateLimit.js';
+
+// Tighter per-IP limiter for the unauthenticated, brute-forceable auth surface
+// (password guessing, TOTP/backup-code guessing, reset-email flooding). The
+// global limiter in buildApp is a looser backstop; this one is the real gate.
+const authLimiter = createRateLimiter('auth', { windowMs: 15 * 60 * 1000, max: 30 });
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
@@ -93,7 +99,7 @@ async function uniqueWorkspaceSlug(base: string): Promise<string> {
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 export async function authRoutes(app: FastifyInstance) {
-  app.post('/auth/signup', async (request, reply) => {
+  app.post('/auth/signup', { preHandler: authLimiter }, async (request, reply) => {
     const parsed = SignUp.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation_error', message: 'Invalid request', details: parsed.error.flatten() });
@@ -167,7 +173,7 @@ export async function authRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post('/auth/signin', async (request, reply) => {
+  app.post('/auth/signin', { preHandler: authLimiter }, async (request, reply) => {
     const parsed = SignIn.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
@@ -273,7 +279,7 @@ export async function authRoutes(app: FastifyInstance) {
   // so attackers can't enumerate accounts. In dev we surface the URL inline
   // so the user can complete the flow without email infrastructure.
 
-  app.post('/auth/forgot-password', async (request, reply) => {
+  app.post('/auth/forgot-password', { preHandler: authLimiter }, async (request, reply) => {
     const parsed = Forgot.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
@@ -323,7 +329,7 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.send({ ok: true, email: lookup.email });
   });
 
-  app.post('/auth/reset-password', async (request, reply) => {
+  app.post('/auth/reset-password', { preHandler: authLimiter }, async (request, reply) => {
     const parsed = ResetPerform.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation_error', message: 'Invalid request', details: parsed.error.flatten() });
@@ -388,7 +394,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   // ── Email verification ───────────────────────────────────────────────────
 
-  app.post('/auth/verify-email', async (request, reply) => {
+  app.post('/auth/verify-email', { preHandler: authLimiter }, async (request, reply) => {
     const parsed = VerifyEmail.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation_error', message: 'Missing token' });
@@ -506,7 +512,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   // Step in the sign-in flow when the user has 2FA. Exchanges challenge +
   // TOTP code (or backup code) for real access/refresh tokens.
-  app.post('/auth/2fa/verify', async (request, reply) => {
+  app.post('/auth/2fa/verify', { preHandler: authLimiter }, async (request, reply) => {
     const parsed = TwoFactorVerify.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error' });
 

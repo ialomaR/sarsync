@@ -6,13 +6,23 @@ import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { loadMembership } from '../boards/auth.js';
 import { hashPassword, validatePasswordStrength } from '../auth/passwords.js';
-import { signAccessToken, issueRefreshToken } from '../auth/tokens.js';
+import { signAccessToken, issueRefreshToken, verifyAccessToken } from '../auth/tokens.js';
 import { toAuthUser, loadMembershipSummaries } from '../auth/serialize.js';
-import { sendEmail, brandedHtml } from '../lib/email.js';
-import { config } from '../config.js';
+import { sendEmail, brandedHtml, escapeHtml } from '../lib/email.js';
+import { config, isProd } from '../config.js';
 import { notify } from '../notifications/service.js';
 
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+// Role hierarchy as numeric ranks so we can enforce that an inviter never
+// grants a role at or above their own (admin → 4 … guest → 0).
+const ROLE_RANK: Record<Role, number> = {
+  [Role.admin]: 4,
+  [Role.dept_manager]: 3,
+  [Role.team_lead]: 2,
+  [Role.member]: 1,
+  [Role.guest]: 0,
+};
 
 const SendInvite = z.object({
   email: z.string().email().max(254),
@@ -53,9 +63,47 @@ export async function inviteRoutes(app: FastifyInstance) {
       const parsed = SendInvite.safeParse(request.body);
       if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
 
-      // dept_manager can only invite to their own department
-      if (m.role === Role.dept_manager && parsed.data.departmentId && parsed.data.departmentId !== m.departmentId) {
-        return reply.code(403).send({ error: 'forbidden', message: 'Cannot invite to other departments' });
+      // Role ceiling: an inviter can never grant a role at or above their own.
+      // Admins are the one exception — they may invite anyone, including other
+      // admins. Without this, a dept_manager could invite (and then accept) an
+      // `admin` invite and escalate to full workspace control.
+      if (m.role !== Role.admin && ROLE_RANK[parsed.data.role] >= ROLE_RANK[m.role]) {
+        return reply.code(403).send({ error: 'role_too_high', message: 'You cannot invite a role at or above your own' });
+      }
+
+      // dept_manager invites are always scoped to their own department — they
+      // must not create workspace-level (unscoped) or other-department
+      // memberships. (The previous `&& parsed.data.departmentId` guard was
+      // bypassable simply by omitting departmentId.)
+      if (m.role === Role.dept_manager) {
+        if (!m.departmentId) {
+          return reply.code(400).send({ error: 'no_department', message: 'Your membership has no department — ask an admin to assign you to one.' });
+        }
+        if (parsed.data.departmentId && parsed.data.departmentId !== m.departmentId) {
+          return reply.code(403).send({ error: 'forbidden', message: 'Cannot invite to other departments' });
+        }
+        parsed.data.departmentId = m.departmentId;
+      }
+
+      // Validate any dept/team belong to THIS workspace and are mutually
+      // consistent, so the accepted membership can never reference another
+      // tenant's dept/team or a team that lives outside the chosen department.
+      if (parsed.data.departmentId) {
+        const d = await prisma.department.findUnique({ where: { id: parsed.data.departmentId } });
+        if (!d || d.workspaceId !== m.workspaceId) {
+          return reply.code(400).send({ error: 'invalid_dept', message: 'Department not in workspace' });
+        }
+      }
+      if (parsed.data.teamId) {
+        const t = await prisma.team.findUnique({ where: { id: parsed.data.teamId } });
+        if (!t || t.workspaceId !== m.workspaceId) {
+          return reply.code(400).send({ error: 'invalid_team', message: 'Team not in workspace' });
+        }
+        if (parsed.data.departmentId && t.departmentId !== parsed.data.departmentId) {
+          return reply.code(400).send({ error: 'team_dept_mismatch', message: 'Team is not in that department' });
+        }
+        // A team-scoped invite with no explicit department inherits the team's.
+        if (!parsed.data.departmentId) parsed.data.departmentId = t.departmentId;
       }
 
       const targetEmail = parsed.data.email.toLowerCase();
@@ -131,14 +179,18 @@ export async function inviteRoutes(app: FastifyInstance) {
       const wsName = (await prisma.workspace.findUnique({
         where: { id: m.workspaceId }, select: { name: true },
       }))?.name || 'a SarSync workspace';
+      // Both are user-controlled and interpolated raw into the email HTML below.
+      const inviterNameHtml = escapeHtml(inviterName);
+      const wsNameHtml = escapeHtml(wsName);
+      const roleLabel = parsed.data.role.replace('_', ' ');
 
       sendEmail({
         to: targetEmail,
         subject: `${inviterName} invited you to ${wsName} on SarSync`,
-        text: `${inviterName} invited you to join "${wsName}" on SarSync as ${parsed.data.role.replace('_', ' ')}.\n\nAccept the invitation:\n${absUrl}\n\nThe link is valid for 14 days.`,
+        text: `${inviterName} invited you to join "${wsName}" on SarSync as ${roleLabel}.\n\nAccept the invitation:\n${absUrl}\n\nThe link is valid for 14 days.`,
         html: brandedHtml({
-          heading: `Join ${wsName}`,
-          body: `<p><strong>${inviterName}</strong> invited you to collaborate on <strong>${wsName}</strong> as <em>${parsed.data.role.replace('_', ' ')}</em>.</p><p style="color:#6B7280;font-size:12.5px;">This invitation is valid for 14 days.</p>`,
+          heading: `Join ${wsNameHtml}`,
+          body: `<p><strong>${inviterNameHtml}</strong> invited you to collaborate on <strong>${wsNameHtml}</strong> as <em>${escapeHtml(roleLabel)}</em>.</p><p style="color:#6B7280;font-size:12.5px;">This invitation is valid for 14 days.</p>`,
           cta: { label: 'Accept invitation', url: absUrl },
         }),
         reason: 'workspace_invite',
@@ -151,7 +203,10 @@ export async function inviteRoutes(app: FastifyInstance) {
         role: invite.role,
         expiresAt: invite.expiresAt.toISOString(),
         inviteUrl: relUrl,
-        token, // dev only — admin can share manually if email isn't reaching
+        // The raw token is the credential that grants workspace access — never
+        // echo it back in production. In dev we return it so testers can share
+        // the link manually when email isn't configured.
+        ...(isProd ? {} : { token }),
       });
     });
 
@@ -234,9 +289,32 @@ export async function inviteRoutes(app: FastifyInstance) {
     const existingUser = await prisma.user.findUnique({ where: { email: inv.email } });
 
     let user;
+    // `true` only for a freshly-created account: that's the one case where the
+    // accept response may carry session tokens. An existing account NEVER
+    // receives fresh tokens from this (public) endpoint — see below.
+    let isNewAccount = false;
     if (existingUser) {
+      // The invited email already has an account. Possession of the invite
+      // link alone must NOT yield a session for that account — otherwise
+      // anyone who intercepts the link (or any inviter, who sees the token in
+      // the create response) could take it over. Require the caller to already
+      // be authenticated AS the invited user. We parse the bearer token
+      // manually rather than using a requireAuth preHandler so the new-user
+      // path below can stay public.
+      let callerId: string | null = null;
+      const header = request.headers.authorization;
+      if (header && header.startsWith('Bearer ')) {
+        try { callerId = verifyAccessToken(header.slice('Bearer '.length)).sub; } catch { callerId = null; }
+      }
+      if (callerId !== existingUser.id) {
+        return reply.code(401).send({
+          error: 'auth_required',
+          message: `Sign in as ${inv.email} to accept this invitation.`,
+        });
+      }
       user = existingUser;
     } else {
+      isNewAccount = true;
       const parsed = AcceptNew.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: 'validation_error', message: 'firstName, lastName, password required' });
@@ -284,16 +362,26 @@ export async function inviteRoutes(app: FastifyInstance) {
       meta: { invitedEmail: inv.email },
     });
 
-    // Issue tokens so the client can drop them straight into the app
-    const accessToken = signAccessToken(user);
-    const { refreshToken } = await issueRefreshToken(user.id, {
-      userAgent: request.headers['user-agent'],
-      ip: request.ip,
-    });
     const memberships = await loadMembershipSummaries(user.id);
 
+    // Only a brand-new account gets a session minted here (there's no prior
+    // session to use). An existing user accepted while authenticated as
+    // themselves — they keep their current session; we just return the
+    // refreshed membership list so the client can show the new workspace.
+    if (isNewAccount) {
+      const accessToken = signAccessToken(user);
+      const { refreshToken } = await issueRefreshToken(user.id, {
+        userAgent: request.headers['user-agent'],
+        ip: request.ip,
+      });
+      return reply.send({
+        accessToken, refreshToken,
+        user: toAuthUser(user),
+        memberships,
+      });
+    }
+
     return reply.send({
-      accessToken, refreshToken,
       user: toAuthUser(user),
       memberships,
     });

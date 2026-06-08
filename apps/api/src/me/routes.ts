@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { canViewBoard } from '../boards/auth.js';
@@ -111,23 +111,34 @@ export async function meRoutes(app: FastifyInstance) {
 
     const result = [];
     for (const m of memberships) {
+      // Guests see no boards in the "my boards" list.
+      if (m.role === Role.guest) {
+        result.push({ workspace: m.workspace, role: m.role, boards: [] });
+        continue;
+      }
+      // Push the visibility predicate into the query so `take` caps VISIBLE
+      // boards. (Filtering AFTER take could hide accessible boards behind 20
+      // other-department boards in a busy workspace — they'd vanish from the
+      // sidebar.) Mirrors canViewBoard: workspace-wide, own dept, own team, or
+      // an explicit board grant.
+      const where: Prisma.BoardWhereInput = { workspaceId: m.workspaceId, archivedAt: null };
+      if (m.role !== Role.admin) {
+        const or: Prisma.BoardWhereInput[] = [{ departmentId: null }];
+        if (m.departmentId) or.push({ departmentId: m.departmentId });
+        if (m.teamId) or.push({ teamId: m.teamId });
+        if (boardAccessIds.size) or.push({ id: { in: [...boardAccessIds] } });
+        where.OR = or;
+      }
       const boards = await prisma.board.findMany({
-        where: { workspaceId: m.workspaceId, archivedAt: null },
+        where,
         orderBy: { updatedAt: 'desc' },
         select: { id: true, title: true, hue: true, departmentId: true, teamId: true },
         take: 20,
       });
-      const visible = boards.filter((b) => {
-        if (m.role === Role.admin) return true;
-        if (m.role === Role.guest) return false;
-        if (b.departmentId == null) return true;
-        if (m.departmentId === b.departmentId) return true;
-        return boardAccessIds.has(b.id);
-      });
       result.push({
         workspace: m.workspace,
         role: m.role,
-        boards: visible.map((b) => ({ ...b, starred: starredIds.has(b.id) })),
+        boards: boards.map((b) => ({ ...b, starred: starredIds.has(b.id) })),
       });
     }
 

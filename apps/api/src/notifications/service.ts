@@ -11,7 +11,7 @@
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { emitUserEvent } from '../realtime.js';
-import { sendEmail, brandedHtml } from '../lib/email.js';
+import { sendEmail, brandedHtml, escapeHtml } from '../lib/email.js';
 
 export interface NotifyArgs {
   recipientId: string;
@@ -97,7 +97,10 @@ export async function notify(args: NotifyArgs) {
         subject,
         text: `${heading}\n\n${created.body || ''}\n\nOpen: ${absLink}`,
         html: brandedHtml({
-          heading,
+          // Escape — actorName comes from a user-controlled display name and is
+          // interpolated raw into the email HTML by brandedHtml. (previewBody is
+          // already escaped above; the heading was the one unescaped sink.)
+          heading: escapeHtml(heading),
           body: previewBody,
           cta: { label: 'Open in SarSync', url: absLink },
         }),
@@ -109,12 +112,6 @@ export async function notify(args: NotifyArgs) {
     console.error('notify() failed', err);
     return null;
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c] || c));
 }
 
 // Notify all card members except the actor.

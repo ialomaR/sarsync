@@ -4,7 +4,7 @@ import { Role, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { loadMembership, canViewBoard, canEditBoard, canEditCard, canManageBoard, canSetBoardDepartment, hasDeptAccess } from './auth.js';
-import { positionAt } from './positions.js';
+import { positionAt, planInsert } from './positions.js';
 import { serializeBoard, serializeLabel, serializeUserMini, serializeBoardField } from './serialize.js';
 import { logActivity } from './activity.js';
 import { notify, notifyCardMembers } from '../notifications/service.js';
@@ -101,6 +101,22 @@ const UpdateChecklistItem = z.object({
 const AddComment = z.object({ body: z.string().min(1).max(10_000) });
 const AddCardMember = z.object({ userId: z.string().min(1) });
 const AddCardLabel = z.object({ labelId: z.string().min(1) });
+
+// Run a reorder as a Serializable transaction so two concurrent moves into the
+// same gap can't read identical neighbors and compute colliding positions —
+// Postgres aborts one with a write-conflict, which we retry a few times.
+async function withSerializableRetry<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await prisma.$transaction(fn, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (err) {
+      // P2034: transaction write-conflict / deadlock (serialization failure).
+      const code = (err as { code?: string }).code;
+      if (attempt < 4 && code === 'P2034') continue;
+      throw err;
+    }
+  }
+}
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 
@@ -348,23 +364,35 @@ export async function boardsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'invalid_target', message: 'Target list not on same board' });
     }
 
-    const siblings = await prisma.card.findMany({
-      where: { listId: parsed.data.toListId, archivedAt: null },
-      orderBy: { position: 'asc' },
-      select: { id: true, position: true },
+    const { updated, renumber } = await withSerializableRetry(async (tx) => {
+      const siblings = await tx.card.findMany({
+        where: { listId: parsed.data.toListId, archivedAt: null, id: { not: card.id } },
+        select: { id: true, position: true },
+      });
+      const plan = planInsert(siblings, parsed.data.toIndex);
+      for (const r of plan.renumber) {
+        await tx.card.update({ where: { id: r.id }, data: { position: r.position } });
+      }
+      const updated = await tx.card.update({
+        where: { id: card.id },
+        data: { listId: parsed.data.toListId, position: plan.position },
+      });
+      return { updated, renumber: plan.renumber };
     });
-    const position = positionAt(siblings, parsed.data.toIndex, card.id);
 
-    const updated = await prisma.card.update({
-      where: { id: card.id },
-      data: { listId: parsed.data.toListId, position },
-    });
     if (card.listId !== parsed.data.toListId) {
       await logActivity({
         boardId: card.list.boardId, actorId: request.userId!,
         verb: 'card_moved', targetType: 'card', targetId: card.id,
         meta: { fromListTitle: card.list.title, toListTitle: toList.title, cardTitle: card.title },
       });
+    }
+    // If a rebalance happened, tell live clients the new positions of the
+    // shifted siblings too, so their local order stays consistent.
+    for (const r of renumber) {
+      emitBoardEvent(card.list.boardId, 'card:moved', {
+        cardId: r.id, listId: parsed.data.toListId, position: r.position,
+      }, actorSocketId(request));
     }
     emitBoardEvent(card.list.boardId, 'card:moved', {
       cardId: updated.id, listId: updated.listId, position: updated.position,
@@ -690,6 +718,17 @@ export async function boardsRoutes(app: FastifyInstance) {
       if (!t || t.workspaceId !== m.workspaceId) {
         return reply.code(400).send({ error: 'invalid_team', message: 'Team not in workspace' });
       }
+      // The team must belong to the board's department. Without this a board in
+      // dept A could be pinned to a team in dept B, and (via the team branch in
+      // canEdit/canManage) that team would gain edit/manage rights across the
+      // department boundary.
+      const boardDept = parsed.data.departmentId ?? null;
+      if (boardDept && t.departmentId !== boardDept) {
+        return reply.code(400).send({ error: 'team_dept_mismatch', message: "Team is not in the board's department" });
+      }
+      // A team-scoped board created without an explicit department inherits the
+      // team's department, so the two never disagree.
+      if (!boardDept) parsed.data.departmentId = t.departmentId;
     }
 
     const board = await prisma.board.create({
@@ -764,6 +803,12 @@ export async function boardsRoutes(app: FastifyInstance) {
       const t = await prisma.team.findUnique({ where: { id: data.teamId } });
       if (!t || t.workspaceId !== board.workspaceId) {
         return reply.code(400).send({ error: 'invalid_team', message: 'Team not in workspace' });
+      }
+      // The team must belong to the board's (possibly newly-set) department, so
+      // a team can never bridge two departments and leak cross-dept edit/manage.
+      const boardDept = ('departmentId' in data ? (data.departmentId ?? null) : board.departmentId);
+      if (boardDept && t.departmentId !== boardDept) {
+        return reply.code(400).send({ error: 'team_dept_mismatch', message: "Team is not in the board's department" });
       }
     }
 
@@ -893,13 +938,22 @@ export async function boardsRoutes(app: FastifyInstance) {
     const parsed = MoveList.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
 
-    const siblings = await prisma.list.findMany({
-      where: { boardId: list.boardId, archivedAt: null },
-      select: { id: true, position: true },
+    const { updated, renumber } = await withSerializableRetry(async (tx) => {
+      const siblings = await tx.list.findMany({
+        where: { boardId: list.boardId, archivedAt: null, id: { not: list.id } },
+        select: { id: true, position: true },
+      });
+      const plan = planInsert(siblings, parsed.data.toIndex);
+      for (const r of plan.renumber) {
+        await tx.list.update({ where: { id: r.id }, data: { position: r.position } });
+      }
+      const updated = await tx.list.update({ where: { id: list.id }, data: { position: plan.position } });
+      return { updated, renumber: plan.renumber };
     });
-    const position = positionAt(siblings, parsed.data.toIndex, list.id);
 
-    const updated = await prisma.list.update({ where: { id: list.id }, data: { position } });
+    for (const r of renumber) {
+      emitBoardEvent(list.boardId, 'list:moved', { id: r.id, position: r.position }, actorSocketId(request));
+    }
     emitBoardEvent(list.boardId, 'list:moved', {
       id: updated.id, position: updated.position,
     }, actorSocketId(request));
@@ -912,7 +966,27 @@ export async function boardsRoutes(app: FastifyInstance) {
     await loadMembership(request, reply, list.board.workspaceId);
     if (reply.sent) return;
     if (!canEditBoard(request.membership!, list.board)) return reply.code(403).send({ error: 'forbidden', message: 'Cannot edit' });
+
+    // Deleting a list cascades to every card it contains (onDelete: Cascade) —
+    // including cards created by OTHER users. That would bypass the per-card
+    // ownership gate on DELETE /cards, where a plain member can only delete
+    // their own cards. So: managers may delete a populated list (they can delete
+    // any card in their scope anyway); everyone else must empty it first, which
+    // forces each card removal through canEditCard.
+    const cardCount = await prisma.card.count({ where: { listId: list.id } });
+    if (cardCount > 0 && !canManageBoard(request.membership!, list.board)) {
+      return reply.code(409).send({
+        error: 'list_not_empty',
+        message: 'Move or delete the cards in this list before deleting it.',
+      });
+    }
+
     await prisma.list.delete({ where: { id: list.id } });
+    await logActivity({
+      boardId: list.boardId, actorId: request.userId!,
+      verb: 'list_deleted', targetType: 'list', targetId: list.id,
+      meta: { listTitle: list.title, cardCount },
+    });
     emitBoardEvent(list.boardId, 'list:deleted', { id: list.id }, actorSocketId(request));
     return reply.code(204).send();
   });
@@ -1256,11 +1330,20 @@ export async function boardsRoutes(app: FastifyInstance) {
       data.options = (parsed.data.options ?? []) as Prisma.InputJsonValue;
     }
     if (parsed.data.toIndex !== undefined) {
-      const siblings = await prisma.boardField.findMany({
-        where: { boardId: field.boardId },
-        select: { id: true, position: true },
+      const toIndex = parsed.data.toIndex;
+      const updated = await withSerializableRetry(async (tx) => {
+        const siblings = await tx.boardField.findMany({
+          where: { boardId: field.boardId, id: { not: field.id } },
+          select: { id: true, position: true },
+        });
+        const plan = planInsert(siblings, toIndex);
+        for (const r of plan.renumber) {
+          await tx.boardField.update({ where: { id: r.id }, data: { position: r.position } });
+        }
+        return tx.boardField.update({ where: { id: field.id }, data: { ...data, position: plan.position } });
       });
-      data.position = positionAt(siblings, parsed.data.toIndex, field.id);
+      emitBoardEvent(field.boardId, 'field:updated', { field: serializeBoardField(updated) }, actorSocketId(request));
+      return reply.send(serializeBoardField(updated));
     }
 
     const updated = await prisma.boardField.update({ where: { id: field.id }, data });

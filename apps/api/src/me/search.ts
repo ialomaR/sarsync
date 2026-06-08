@@ -11,7 +11,10 @@ export async function searchRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: { q?: string; limit?: string } }>('/search', async (request, reply) => {
     const q = (request.query.q || '').trim();
-    const limit = Math.min(parseInt(request.query.limit || '12', 10), 30);
+    // Guard against NaN (?limit=abc → Prisma take:NaN crash) and negatives
+    // (?limit=-5 → "take from the end", wrong results). Clamp to [1, 30].
+    const parsedLimit = parseInt(request.query.limit || '12', 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 30) : 12;
     if (q.length < 2) return reply.send({ boards: [], cards: [] });
 
     const memberships = await prisma.membership.findMany({

@@ -6,6 +6,8 @@ import { prisma } from '../db.js';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { optimizeImageBuffer, generateThumbBuffer } from '../lib/optimize.js';
 import { putObject, getObjectBuffer, deleteObject } from '../lib/storage.js';
+import { safeDownloadHeaders } from '../lib/download.js';
+import { parseDateParam } from '../lib/dates.js';
 
 const MAX_BYTES = 100 * 1024 * 1024; // 100 MB — global standard for collaboration tools
 
@@ -14,6 +16,9 @@ const MAX_BYTES = 100 * 1024 * 1024; // 100 MB — global standard for collabora
 const BLOCKED_EXTS = new Set([
   '.exe', '.bat', '.cmd', '.scr', '.vbs', '.ps1', '.msi', '.app', '.dmg',
   '.com', '.pif', '.jar', '.sh',
+  // Active web content (defense in depth; downloads are already forced to
+  // attachment via lib/download.ts).
+  '.html', '.htm', '.xhtml', '.shtml', '.svg', '.xml',
 ]);
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif']);
@@ -57,8 +62,9 @@ export async function mediaRoutes(app: FastifyInstance) {
     const v = await deptViewerMembership(request.userId!, request.params.id);
     if (!v.allowed) return reply.code(403).send({ error: 'forbidden', message: 'No access to this department' });
 
-    const limit = Math.min(parseInt(request.query.limit || '60', 10), 200);
-    const before = request.query.before ? new Date(request.query.before) : null;
+    const parsedLimit = parseInt(request.query.limit || '60', 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 60;
+    const before = parseDateParam(request.query.before) ?? null;
     const sourceFilter = request.query.source === 'upload' || request.query.source === 'chat'
       ? request.query.source : null;
 
@@ -234,9 +240,10 @@ export async function mediaRoutes(app: FastifyInstance) {
 
     const buffer = await getObjectBuffer(item.s3Key);
     if (!buffer) return reply.code(404).send({ error: 'file_missing', message: 'File no longer in storage' });
+    const dl = safeDownloadHeaders(item.mimeType, item.filename);
     return reply
-      .header('content-type', item.mimeType)
-      .header('content-disposition', `inline; filename="${encodeURIComponent(item.filename)}"`)
+      .header('content-type', dl.contentType)
+      .header('content-disposition', dl.contentDisposition)
       .send(buffer);
   });
 

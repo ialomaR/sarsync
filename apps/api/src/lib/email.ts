@@ -21,6 +21,15 @@ export interface SendEmailArgs {
 
 const SENDGRID_URL = 'https://api.sendgrid.com/v3/mail/send';
 
+// Escape user-controlled text before interpolating it into email HTML. Callers
+// MUST run any user-derived value (display names, workspace names, etc.) through
+// this before embedding it in brandedHtml's `heading`/`body`.
+export function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c] || c));
+}
+
 export async function sendEmail(args: SendEmailArgs): Promise<{ ok: boolean; via: 'sendgrid' | 'log'; error?: string }> {
   const log = args.log;
 

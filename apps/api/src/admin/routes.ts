@@ -4,6 +4,7 @@ import { Prisma, Role } from '@prisma/client';
 import { prisma } from '../db.js';
 import { requireAuth } from '../auth/middleware.js';
 import { loadMembership } from '../boards/auth.js';
+import { parseDateParam } from '../lib/dates.js';
 
 // ── Role catalog (single source of truth) ──────────────────────────────────
 // Mirrors logic in apps/api/src/boards/auth.ts and the role enum in schema.
@@ -491,6 +492,18 @@ export async function adminRoutes(app: FastifyInstance) {
     const parsed = UpdateMembership.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid request' });
 
+    // Last-admin guard: never let the only admin be demoted out of admin — that
+    // would leave the workspace with no one able to manage org/members/billing,
+    // unrecoverable without DB intervention.
+    if (m.role === Role.admin && parsed.data.role !== undefined && parsed.data.role !== Role.admin) {
+      const otherAdmins = await prisma.membership.count({
+        where: { workspaceId: m.workspaceId, role: Role.admin, id: { not: m.id } },
+      });
+      if (otherAdmins === 0) {
+        return reply.code(400).send({ error: 'last_admin', message: 'Promote another admin before changing this one — a workspace must keep at least one admin.' });
+      }
+    }
+
     // Validate FKs against this workspace
     if (parsed.data.departmentId) {
       const d = await prisma.department.findUnique({ where: { id: parsed.data.departmentId } });
@@ -518,6 +531,15 @@ export async function adminRoutes(app: FastifyInstance) {
     if (!await requireWorkspaceAdmin(request, reply, m.workspaceId)) return;
     if (m.userId === request.userId) {
       return reply.code(400).send({ error: 'cannot_remove_self', message: 'You cannot remove yourself' });
+    }
+    // Last-admin guard: deleting the only admin orphans the workspace.
+    if (m.role === Role.admin) {
+      const otherAdmins = await prisma.membership.count({
+        where: { workspaceId: m.workspaceId, role: Role.admin, id: { not: m.id } },
+      });
+      if (otherAdmins === 0) {
+        return reply.code(400).send({ error: 'last_admin', message: 'Promote another admin before removing this one — a workspace must keep at least one admin.' });
+      }
     }
     await prisma.membership.delete({ where: { id: m.id } });
     return reply.code(204).send();
@@ -702,13 +724,10 @@ export async function adminRoutes(app: FastifyInstance) {
     if (request.query.departmentId) {
       where.board = { workspaceId, departmentId: request.query.departmentId };
     }
-    if (request.query.before) {
-      where.createdAt = { lt: new Date(request.query.before) };
-    }
-    if (request.query.since) {
-      const since = new Date(request.query.since);
-      where.createdAt = { ...(where.createdAt as object || {}), gte: since };
-    }
+    const before = parseDateParam(request.query.before);
+    if (before) where.createdAt = { lt: before };
+    const since = parseDateParam(request.query.since);
+    if (since) where.createdAt = { ...(where.createdAt as object || {}), gte: since };
 
     const rows = await prisma.activity.findMany({
       where,

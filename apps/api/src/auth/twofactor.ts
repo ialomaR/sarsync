@@ -45,12 +45,12 @@ export function signChallengeToken(userId: string): string {
   return jwt.sign(
     { sub: userId, purpose: '2fa' } satisfies TwoFactorChallengePayload,
     config.JWT_SECRET,
-    { expiresIn: CHALLENGE_TTL as jwt.SignOptions['expiresIn'] },
+    { expiresIn: CHALLENGE_TTL as jwt.SignOptions['expiresIn'], algorithm: 'HS256' },
   );
 }
 
 export function verifyChallengeToken(token: string): { userId: string } {
-  const payload = jwt.verify(token, config.JWT_SECRET) as TwoFactorChallengePayload;
+  const payload = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as TwoFactorChallengePayload;
   if (payload.purpose !== '2fa' || !payload.sub) throw new Error('invalid_purpose');
   return { userId: payload.sub };
 }

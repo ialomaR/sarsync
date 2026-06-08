@@ -75,6 +75,12 @@ export function canViewBoard(
   if (board.departmentId && membership.departmentId === board.departmentId) return true;
   // boards with no dept (workspace-wide) visible to all members
   if (!board.departmentId) return true;
+  // Team-scoped: members of the board's team can see it. This MUST be here so
+  // that editability/manageability (both of which grant team access below) can
+  // never exceed visibility — otherwise a user could edit a board they can't
+  // see. Board create/update also enforce team.departmentId === board.departmentId,
+  // so a team can't bridge two departments.
+  if (board.teamId && membership.teamId === board.teamId) return true;
   // Explicit per-board access (granted when added to a card on a cross-dept board)
   if (board.id && membership.boardAccessIds?.has(board.id)) return true;
   return false;
