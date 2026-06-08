@@ -1,5 +1,5 @@
 import React from 'react';
-import { fetchMe, signIn as apiSignIn, signUp as apiSignUp, signOut as apiSignOut, getRefreshToken } from '../lib/api.js';
+import { fetchMe, signIn as apiSignIn, signUp as apiSignUp, signOut as apiSignOut, getRefreshToken, getAccessToken, onAuthChange } from '../lib/api.js';
 
 const AuthCtx = React.createContext(null);
 const ACTIVE_WS_KEY = 'sarsync:activeWorkspaceId';
@@ -42,6 +42,22 @@ export function AuthProvider({ children }) {
     })();
     return () => { cancelled = true; };
   }, [pickActive]);
+
+  // If the API client clears its tokens out from under us — e.g. a refresh
+  // attempt failed because the refresh token was revoked (password change),
+  // expired, or the user was suspended — flip to guest so ProtectedRoute
+  // redirects to sign-in instead of leaving a fully-rendered but dead app where
+  // every request 401s. Only acts when BOTH tokens are gone, so a normal
+  // access-token rotation (refresh still present) never logs the user out.
+  React.useEffect(() => {
+    return onAuthChange(() => {
+      if (!getRefreshToken() && !getAccessToken()) {
+        setState((s) => (s.status === 'authed'
+          ? { status: 'guest', user: null, memberships: [], activeWorkspaceId: null }
+          : s));
+      }
+    });
+  }, []);
 
   const signIn = React.useCallback(async (email, password) => {
     const data = await apiSignIn(email, password);

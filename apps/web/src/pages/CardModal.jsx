@@ -869,8 +869,10 @@ function FieldRow({ theme, rtl, canEdit, field, value, allMembers, onSet }) {
   }
   if (field.type === 'date') {
     const ymd = value?.valueDate ? new Date(value.valueDate).toISOString().slice(0, 10) : '';
+    // Read uses toISOString (UTC); write MUST use UTC too (append 'Z'), else the
+    // stored value round-trips to the previous day for non-UTC users.
     return <div>{label}<input type="date" value={ymd} style={inputStyle}
-      onChange={(e) => onSet({ date: e.target.value ? new Date(`${e.target.value}T00:00:00`).toISOString() : null })} /></div>;
+      onChange={(e) => onSet({ date: e.target.value ? new Date(`${e.target.value}T00:00:00Z`).toISOString() : null })} /></div>;
   }
   if (field.type === 'select') {
     return <div>{label}<select value={value?.valueOptionId || ''} style={{ ...inputStyle, cursor: 'pointer' }}

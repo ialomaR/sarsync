@@ -1,7 +1,7 @@
 import React from 'react';
 import { api, getAccessToken } from '../lib/api.js';
 import { normalizeBoard, normalizeCard, normalizeList, formatDueDate } from '../lib/normalize.js';
-import { subscribeSocket, emit } from '../lib/socket.js';
+import { subscribeSocket, joinRoom, leaveRoom } from '../lib/socket.js';
 import { useAuth } from './AuthContext.jsx';
 
 // Project a /cards/:id detail response down to the chip-shape that the
@@ -84,7 +84,7 @@ export function useBoardApi(boardId) {
   // Subscribe to board events for live updates
   React.useEffect(() => {
     if (!boardId) return;
-    emit('board:join', boardId);
+    joinRoom('board:join', 'board:leave', boardId);
     const unsub = subscribeSocket((evt) => {
       if (evt.type !== 'event') return;
       if (evt.kind === 'card:moved') {
@@ -252,7 +252,7 @@ export function useBoardApi(boardId) {
       }
     });
     return () => {
-      emit('board:leave', boardId);
+      leaveRoom('board:join', 'board:leave', boardId);
       unsub();
     };
   }, [boardId]);
@@ -277,10 +277,25 @@ export function useBoardApi(boardId) {
       return { ...s, lists: next };
     });
     try {
-      await api(`/cards/${cardId}/move`, {
+      const res = await api(`/cards/${cardId}/move`, {
         method: 'PATCH',
         body: { toListId, toIndex },
       });
+      // Adopt the server's authoritative fractional position. Without this the
+      // card keeps its stale pre-move position, and a later socket card:moved
+      // event (which inserts relative to positions) would place collaborators'
+      // cards in the wrong slot, diverging the board until a full reload.
+      if (res && typeof res.position === 'number') {
+        setState((s) => ({
+          ...s,
+          lists: s.lists.map((l) => ({
+            ...l,
+            cards: l.cards.map((c) => (c.id === cardId
+              ? { ...c, listId: res.listId ?? c.listId, position: res.position }
+              : c)),
+          })),
+        }));
+      }
     } catch (err) {
       // Revert on failure
       setState((s) => ({ ...s, lists: prevSnapshot }));
@@ -300,10 +315,18 @@ export function useBoardApi(boardId) {
       return { ...s, lists: next };
     });
     try {
-      await api(`/lists/${listId}/move`, {
+      const res = await api(`/lists/${listId}/move`, {
         method: 'PATCH',
         body: { toIndex },
       });
+      // Adopt the server's authoritative position so a later socket list:moved
+      // re-sort (by position) doesn't snap this list back to its old spot.
+      if (res && typeof res.position === 'number') {
+        setState((s) => ({
+          ...s,
+          lists: s.lists.map((l) => (l.id === listId ? { ...l, position: res.position } : l)),
+        }));
+      }
     } catch (err) {
       setState((s) => ({ ...s, lists: prevSnapshot }));
       throw err;

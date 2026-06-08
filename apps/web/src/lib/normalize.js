@@ -1,11 +1,14 @@
 // Normalize API responses to the shape the existing UI components expect.
 
 const dateFmt = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' });
+// Due dates are stored as UTC midnight (see CardModal date inputs), so they must
+// be FORMATTED in UTC too — otherwise users west of UTC see the previous day.
+const dueFmt = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
 export function formatDueDate(iso) {
   if (!iso) return null;
   try {
-    return dateFmt.format(new Date(iso));
+    return dueFmt.format(new Date(iso));
   } catch {
     return null;
   }
@@ -40,6 +43,7 @@ export function normalizeCard(c) {
     labels: c.labelIds || [],
     members: c.memberIds || [],
     due: formatDueDate(c.due),
+    dueIso: c.due || null, // raw ISO for real overdue comparison (see Card.jsx)
     orderedBy: c.orderedBy || null,
     checklist: c.checklistTotal > 0 ? { done: c.checklistDone, total: c.checklistTotal } : null,
     comments: c.commentCount || 0,

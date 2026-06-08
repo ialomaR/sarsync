@@ -26,6 +26,20 @@ export function VoiceRecorder({ theme, rtl, onComplete, onCancel }) {
   const [phase, setPhase] = React.useState('starting'); // 'starting' | 'recording' | 'stopping' | 'error'
   const [error, setError] = React.useState(null);
 
+  // Latest-callback refs. The recording lifecycle effect MUST run exactly once
+  // (mount → unmount); reading the callbacks through refs lets it use `[]` deps
+  // so it isn't torn down every time the parent re-renders (DeptChat re-renders
+  // on every incoming socket event). The old `[onComplete, onCancel]` deps made
+  // each re-render stop the recorder mid-take and auto-send a partial clip.
+  const onCompleteRef = React.useRef(onComplete);
+  const onCancelRef = React.useRef(onCancel);
+  React.useEffect(() => { onCompleteRef.current = onComplete; onCancelRef.current = onCancel; });
+
+  // Only a deliberate Send / 5-min auto-stop should deliver the recording. A
+  // stop triggered by unmount or Cancel leaves this false, so cleanup never
+  // emits a voice message the user didn't choose to send.
+  const deliverRef = React.useRef(false);
+
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -39,13 +53,14 @@ export function VoiceRecorder({ theme, rtl, onComplete, onCancel }) {
         chunksRef.current = [];
         rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
         rec.onstop = () => {
+          stream.getTracks().forEach((t) => t.stop());
+          if (!deliverRef.current) return; // unmount/cancel — discard silently
           const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' });
           const durationMs = Date.now() - startedAtRef.current;
-          stream.getTracks().forEach((t) => t.stop());
           if (chunksRef.current.length === 0) {
-            onCancel?.();
+            onCancelRef.current?.();
           } else {
-            onComplete({ blob, durationMs, mimeType: rec.mimeType || 'audio/webm' });
+            onCompleteRef.current?.({ blob, durationMs, mimeType: rec.mimeType || 'audio/webm' });
           }
         };
         startedAtRef.current = Date.now();
@@ -65,7 +80,10 @@ export function VoiceRecorder({ theme, rtl, onComplete, onCancel }) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
-  }, [onComplete, onCancel]);
+    // Mount-once: callbacks are read via refs (see above), so they intentionally
+    // are not dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Timer + auto-stop at 5min
   React.useEffect(() => {
@@ -74,6 +92,7 @@ export function VoiceRecorder({ theme, rtl, onComplete, onCancel }) {
       const ms = Date.now() - startedAtRef.current;
       setElapsed(ms);
       if (ms >= MAX_MS) {
+        deliverRef.current = true; // auto-stop at the cap still sends
         try { recorderRef.current?.stop(); } catch {}
         setPhase('stopping');
       }
@@ -83,11 +102,13 @@ export function VoiceRecorder({ theme, rtl, onComplete, onCancel }) {
 
   const stopAndSend = () => {
     if (phase !== 'recording') return;
+    deliverRef.current = true; // the user asked to send
     setPhase('stopping');
     try { recorderRef.current?.stop(); } catch {}
   };
 
   const cancel = () => {
+    deliverRef.current = false; // never deliver a cancelled take
     chunksRef.current = []; // discard data
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       try { recorderRef.current.stop(); } catch {}

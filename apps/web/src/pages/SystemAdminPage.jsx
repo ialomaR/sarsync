@@ -334,7 +334,9 @@ function WorkspaceDetailDrawer({ theme, rtl, workspaceId, onClose, onSuspend, on
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)',
       zIndex: 50, display: 'flex',
-      justifyContent: rtl ? 'flex-start' : 'flex-end',
+      // Let inherited `direction: rtl` mirror this — `flex-end` already resolves
+      // to the inline-end (visual left in RTL). Manually flipping double-flips it.
+      justifyContent: 'flex-end',
     }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         width: 'min(560px, 100vw)', height: '100vh',

@@ -7,11 +7,22 @@ import { getAccessToken, onAuthChange } from './api.js';
 
 let socket = null;
 const SUBS = new Set();
+// Rooms this client wants to be in. Socket.io room membership is per-connection
+// server state and is lost on every reconnect (token rotation or a network
+// blip → new server-side socket), so we track desired rooms here and re-emit
+// the joins on each `connect`. Without this, live updates silently stop after a
+// reconnect until a full page reload.
+const JOINED = new Map(); // key `${joinEvent} ${id}` -> { joinEvent, id }
 
 function publish(event) {
   for (const fn of SUBS) {
     try { fn(event); } catch {}
   }
+}
+
+function rejoinAll() {
+  if (!socket?.connected) return;
+  for (const { joinEvent, id } of JOINED.values()) socket.emit(joinEvent, id);
 }
 
 function ensureConnected() {
@@ -25,11 +36,23 @@ function ensureConnected() {
     transports: ['websocket', 'polling'],
     reconnection: true,
   });
-  socket.on('connect', () => publish({ type: 'connect' }));
+  socket.on('connect', () => { rejoinAll(); publish({ type: 'connect' }); });
   socket.on('disconnect', () => publish({ type: 'disconnect' }));
   // Generic forwarder: any server-emitted event becomes a published event
   socket.onAny((kind, payload) => publish({ type: 'event', kind, payload }));
   return socket;
+}
+
+// Join/leave a server room durably across reconnects. `joinEvent`/`leaveEvent`
+// are the server's room verbs (e.g. 'board:join' / 'board:leave').
+export function joinRoom(joinEvent, leaveEvent, id) {
+  JOINED.set(`${joinEvent} ${id}`, { joinEvent, leaveEvent, id });
+  emit(joinEvent, id);
+}
+
+export function leaveRoom(joinEvent, leaveEvent, id) {
+  JOINED.delete(`${joinEvent} ${id}`);
+  if (socket?.connected) socket.emit(leaveEvent, id);
 }
 
 // Reconnect when access token rotates (signin / signout / refresh)

@@ -34,15 +34,26 @@ export function AcceptInvitePage() {
     return () => { cancelled = true; };
   }, [token]);
 
+  // For an invite whose email already has an account, the server requires the
+  // caller to already be signed in AS that account (otherwise anyone holding
+  // the link could take it over). When that's not the case we must NOT call
+  // accept — we send them to sign in first.
+  const signedInAsInvited = auth.status === 'authed' && auth.user?.email === info.data?.email;
+  const needsSignIn = !!info.data?.userExists && !signedInAsInvited;
+
   const accept = async () => {
     setAccepting(true); setAcceptError(null);
     try {
       const body = info.data?.userExists ? {} : { firstName, lastName, password };
       const resp = await api(`/invites/${token}/accept`, { method: 'POST', body });
-      // Drop tokens from accept response into the API client
-      setAccessToken(resp.accessToken);
-      setRefreshToken(resp.refreshToken);
-      // Soft refresh the auth context by reloading; simplest reliable path
+      // Only a brand-new account returns session tokens. An existing user
+      // accepted using their own (already-authenticated) session — never
+      // overwrite that session with tokens from the response.
+      if (resp?.accessToken && resp?.refreshToken) {
+        setAccessToken(resp.accessToken);
+        setRefreshToken(resp.refreshToken);
+      }
+      // Full reload re-hydrates AuthContext (and surfaces the new workspace).
       window.location.href = '/boards';
     } catch (err) {
       setAcceptError(err.message);
@@ -146,18 +157,21 @@ export function AcceptInvitePage() {
 
             {info.data.userExists ? (
               <>
-                {auth.status === 'authed' && auth.user?.email !== info.data.email && (
+                {needsSignIn ? (
                   <div style={{
                     padding: '10px 12px', marginBottom: 14,
                     background: '#FEF3C7', color: '#92400E', borderRadius: theme.cardRadius,
-                    fontSize: 12,
+                    fontSize: 12, lineHeight: 1.5,
                   }}>
-                    {rtl ? `أنت مسجل دخول حاليًا بـ ${auth.user.email}. اقبل الدعوة لإضافة هذه المساحة.` : `You're signed in as ${auth.user.email}. Accepting will add this workspace.`}
+                    {auth.status === 'authed'
+                      ? (rtl ? `أنت مسجل دخول بـ ${auth.user.email}. سجّل الدخول بـ ${info.data.email} لقبول هذه الدعوة.` : `You're signed in as ${auth.user.email}. Sign in as ${info.data.email} to accept this invitation.`)
+                      : (rtl ? `سجّل الدخول بـ ${info.data.email} لقبول هذه الدعوة.` : `Sign in as ${info.data.email} to accept this invitation.`)}
                   </div>
+                ) : (
+                  <p style={{ fontSize: 13, color: theme.muted, margin: '0 0 18px' }}>
+                    {rtl ? 'اقبل لإضافة المساحة لحسابك.' : 'Accept to add this workspace to your account.'}
+                  </p>
                 )}
-                <p style={{ fontSize: 13, color: theme.muted, margin: '0 0 18px' }}>
-                  {rtl ? 'لديك حساب موجود بالفعل بهذا البريد. اقبل لإضافة المساحة لحسابك.' : 'You already have an account with this email. Accept to add the workspace.'}
-                </p>
               </>
             ) : (
               <>
@@ -186,16 +200,27 @@ export function AcceptInvitePage() {
               }}>{acceptError}</div>
             )}
 
-            <button onClick={accept} disabled={accepting || (!info.data.userExists && (!firstName || !lastName || password.length < 8))}
-              style={{
-                width: '100%', padding: '11px 18px',
-                background: theme.accent, color: theme.accentText, border: 'none',
+            {needsSignIn ? (
+              <Link to="/auth/signin" style={{
+                display: 'block', textAlign: 'center', width: '100%',
+                padding: '11px 18px', boxSizing: 'border-box',
+                background: theme.accent, color: theme.accentText, textDecoration: 'none',
                 borderRadius: theme.cardRadius, fontSize: 14, fontWeight: 600,
-                cursor: 'pointer', fontFamily: 'inherit',
-                opacity: accepting ? 0.7 : 1,
               }}>
-              {accepting ? '…' : (rtl ? 'قبول الدعوة' : 'Accept invite')}
-            </button>
+                {rtl ? 'تسجيل الدخول للمتابعة' : 'Sign in to continue'}
+              </Link>
+            ) : (
+              <button onClick={accept} disabled={accepting || (!info.data.userExists && (!firstName || !lastName || password.length < 8))}
+                style={{
+                  width: '100%', padding: '11px 18px',
+                  background: theme.accent, color: theme.accentText, border: 'none',
+                  borderRadius: theme.cardRadius, fontSize: 14, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  opacity: accepting ? 0.7 : 1,
+                }}>
+                {accepting ? '…' : (rtl ? 'قبول الدعوة' : 'Accept invite')}
+              </button>
+            )}
           </>
         )}
       </div>

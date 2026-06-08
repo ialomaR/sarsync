@@ -182,8 +182,8 @@ function Select({ theme, children, ...props }) {
 export function AdminConsole({ themeName, accent, rtl }) {
   const theme = buildTheme(themeName, accent);
   const auth = useAuth();
-  const workspaceId = auth.memberships[0]?.workspaceId;
-  const myRole = auth.memberships[0]?.role;
+  const workspaceId = auth.activeMembership?.workspaceId;
+  const myRole = auth.activeMembership?.role;
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get('tab') || (searchParams.get('role') ? 'members' : 'dashboard');
   const [tab, setTab] = React.useState(initialTab);
@@ -1382,7 +1382,7 @@ export function DepartmentView({ themeName, accent, rtl, deptId }) {
   const theme = buildTheme(themeName, accent);
   const navigate = useNavigate();
   const auth = useAuth();
-  const workspaceId = auth.memberships[0]?.workspaceId;
+  const workspaceId = auth.activeMembership?.workspaceId;
   const [state, setState] = React.useState({ status: 'loading', dept: null, error: null });
   const [defaultDeptId, setDefaultDeptId] = React.useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1500,7 +1500,7 @@ export function DepartmentView({ themeName, accent, rtl, deptId }) {
         <div style={{ padding: '18px 28px 32px' }}>
           {tab === 'projects' && <DeptProjectsTab theme={theme} rtl={rtl} dept={dept} navigate={navigate}
             canManage={(() => {
-              const m = auth.memberships[0];
+              const m = auth.activeMembership;
               if (!m) return false;
               if (m.role === 'admin') return true;
               if (m.role === 'dept_manager' && m.departmentId === dept.id) return true;
@@ -1824,7 +1824,7 @@ export function MyWorkView({ themeName, accent, rtl }) {
   const navigate = useNavigate();
   const auth = useAuth();
   const me = auth.user;
-  const myMembership = auth.memberships[0];
+  const myMembership = auth.activeMembership;
   const [state, setState] = React.useState({ status: 'loading', tasks: [], stats: null, labelsById: {}, error: null });
 
   React.useEffect(() => {

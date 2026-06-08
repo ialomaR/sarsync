@@ -182,7 +182,9 @@ function ChangePasswordRow({ theme, rtl }) {
             background: theme.accent, color: theme.accentText,
             border: 'none', fontSize: 12.5, fontWeight: 600,
             cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-            alignSelf: rtl ? 'flex-start' : 'flex-end',
+            // Inherited `direction: rtl` already mirrors flex-end to the inline
+            // end — don't manually flip (that double-flips it to the wrong side).
+            alignSelf: 'flex-end',
           }}>{busy ? '…' : (rtl ? 'تحديث' : 'Update')}</button>
         </form>
       )}

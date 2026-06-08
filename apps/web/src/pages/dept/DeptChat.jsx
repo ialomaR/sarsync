@@ -3,7 +3,7 @@ import { api, getAccessToken, saveChatAttachmentToMedia } from '../../lib/api.js
 import { Avatar } from '../../ui/Avatar.jsx';
 import { Icon } from '../../ui/Icon.jsx';
 import { useAuth } from '../../state/AuthContext.jsx';
-import { subscribeSocket, emit } from '../../lib/socket.js';
+import { subscribeSocket, joinRoom, leaveRoom } from '../../lib/socket.js';
 import { VoiceRecorder, VoicePlayer } from './VoiceRecorder.jsx';
 import { MentionEditor } from './MentionEditor.jsx';
 
@@ -116,7 +116,7 @@ export function DeptChat({ theme, rtl, deptId }) {
 
   // Join the dept room + subscribe to live events
   React.useEffect(() => {
-    emit('dept:join', deptId);
+    joinRoom('dept:join', 'dept:leave', deptId);
     const unsub = subscribeSocket((evt) => {
       if (evt.type !== 'event') return;
       if (evt.kind === 'chat:message_added') {
@@ -156,7 +156,7 @@ export function DeptChat({ theme, rtl, deptId }) {
       }
     });
     return () => {
-      emit('dept:leave', deptId);
+      leaveRoom('dept:join', 'dept:leave', deptId);
       unsub();
     };
   }, [deptId, myId, markRead]);

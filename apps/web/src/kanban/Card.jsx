@@ -12,7 +12,17 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
   const padY = compact ? 8 : 10;
   const gap = compact ? 6 : 8;
 
-  const isOverdue = card.due && /Sep [12]\b/.test(card.due);
+  // Overdue = the due day is before today. (The old `/Sep [12]/` test was a
+  // leftover from the static prototype that matched the formatted string, not
+  // the actual date.) Due dates are stored as UTC midnight, so compare against
+  // today's UTC midnight to keep the day boundary consistent with entry.
+  const isOverdue = (() => {
+    if (!card.dueIso) return false;
+    const d = new Date(card.dueIso);
+    if (Number.isNaN(d.getTime())) return false;
+    const now = new Date();
+    return d.getTime() < Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  })();
   const cdone = card.checklist && card.checklist.done === card.checklist.total && card.checklist.total > 0;
   const isDragging = dnd && dnd.drag && dnd.drag.cardId === card.id;
   const showSlotAbove = dnd && dnd.over && dnd.over.listId === listId && dnd.over.index === index && !isDragging;

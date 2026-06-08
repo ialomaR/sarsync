@@ -220,8 +220,11 @@ export const MentionEditor = React.forwardRef(function MentionEditor({
         }} />
       {mention && filtered.length > 0 && (
         <div style={{
+          // Full-width dropdown via logical properties only. Mixing a logical
+          // `insetInlineStart` with a physical `right` made the anchoring differ
+          // between LTR and RTL.
           position: 'absolute', bottom: 'calc(100% + 6px)', insetInlineStart: 0,
-          right: 0,
+          insetInlineEnd: 0,
           background: theme.surface, border: `.5px solid ${theme.border}`,
           borderRadius: 8, boxShadow: theme.shadow,
           padding: 4, maxHeight: 240, overflowY: 'auto', zIndex: 30,
