@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { getAccessToken } from '../lib/api.js';
 
 // Append the user's access token to attachment URLs so <img>/<video> requests
@@ -57,7 +58,7 @@ export function MediaLightbox({ theme, rtl, items, index = 0, onClose }) {
       }}>{(dir > 0) !== !!rtl ? '›' : '‹'}</button>
   );
 
-  return (
+  const overlay = (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 100,
       background: 'rgba(0,0,0,.85)', backdropFilter: 'blur(6px)',
@@ -110,4 +111,11 @@ export function MediaLightbox({ theme, rtl, items, index = 0, onClose }) {
       </div>
     </div>
   );
+
+  // Render at document.body via a portal so the fixed overlay is positioned
+  // against the VIEWPORT, not the card. A board card uses transform on hover
+  // (which makes it the containing block for position:fixed) plus
+  // overflow:hidden — without the portal the lightbox would be trapped and
+  // clipped inside the card instead of covering the page.
+  return typeof document !== 'undefined' ? createPortal(overlay, document.body) : overlay;
 }
