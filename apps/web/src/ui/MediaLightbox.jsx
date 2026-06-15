@@ -58,14 +58,19 @@ export function MediaLightbox({ theme, rtl, items, index = 0, onClose }) {
       }}>{(dir > 0) !== !!rtl ? '›' : '‹'}</button>
   );
 
+  // Clicking the backdrop closes the lightbox. stopPropagation is essential:
+  // this overlay is portaled to <body>, but React events still bubble up the
+  // COMPONENT tree to the card that rendered it — without this, closing the
+  // lightbox would also trigger the card's onClick and open the card modal.
+  const close = (e) => { e.stopPropagation(); onClose(); };
   const overlay = (
-    <div onClick={onClose} style={{
+    <div onClick={close} style={{
       position: 'fixed', inset: 0, zIndex: 100,
       background: 'rgba(0,0,0,.85)', backdropFilter: 'blur(6px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: 24, direction: rtl ? 'rtl' : 'ltr',
     }}>
-      <button onClick={onClose} aria-label="Close" style={{
+      <button onClick={close} aria-label="Close" style={{
         position: 'absolute', top: 16, insetInlineEnd: 16,
         width: 36, height: 36, borderRadius: '50%',
         background: 'rgba(255,255,255,.12)', color: '#fff',
