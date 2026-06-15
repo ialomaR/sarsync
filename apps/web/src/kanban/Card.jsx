@@ -3,6 +3,7 @@ import { DragCtx } from '../state/board-state.jsx';
 import { CoverPlaceholder, LabelChip, LabelStripe } from '../ui/Label.jsx';
 import { AvatarStack } from '../ui/Avatar.jsx';
 import { Icon } from '../ui/Icon.jsx';
+import { MediaLightbox, withToken } from '../ui/MediaLightbox.jsx';
 
 export function Card({ card, theme, density, showAvatars, onClick, listId, index, canDrag = true, rtl }) {
   const [hover, setHover] = React.useState(false);
@@ -74,9 +75,11 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
           flexShrink: 0,
         }}
       >
-        {card.cover && (
-          <CoverPlaceholder url={card.cover.url} hue={card.cover.hue} label={card.cover.label} height={compact ? 70 : 90} />
-        )}
+        {(card.media && card.media.length > 0)
+          ? <CardMedia media={card.media} theme={theme} rtl={rtl} compact={compact} />
+          : card.cover && (
+            <CoverPlaceholder url={card.cover.url} hue={card.cover.hue} label={card.cover.label} height={compact ? 70 : 90} />
+          )}
         <div style={{
           padding: `${padY}px ${padX}px`,
           display: 'flex', flexDirection: 'column', gap,
@@ -158,5 +161,98 @@ export function Card({ card, theme, density, showAvatars, onClick, listId, index
         </div>
       </div>
     </>
+  );
+}
+
+// Media gallery shown at the top of a card. One item renders as a full-width
+// cover; two or more render as a side-by-side thumbnail strip. Clicking any
+// tile opens the shared lightbox (image preview / video playback). Tile clicks
+// stop propagation so they don't also open the card modal. Exported so it can
+// be rendered/tested in isolation.
+export function CardMedia({ media, theme, rtl, compact }) {
+  const [preview, setPreview] = React.useState(null); // index into media, or null
+  if (!media || media.length === 0) return null; // no media → render nothing
+  const open = (e, idx) => { e.stopPropagation(); setPreview(idx); };
+  const coverH = compact ? 72 : 92;
+  const tileH = compact ? 54 : 64;
+  const dark = '#111827';
+
+  const lightbox = preview != null && (
+    <MediaLightbox theme={theme} rtl={rtl} items={media} index={preview} onClose={() => setPreview(null)} />
+  );
+
+  // Single item → cover treatment.
+  if (media.length === 1) {
+    const m = media[0];
+    return (
+      <>
+        <div onClick={(e) => open(e, 0)} title={m.name}
+          style={{
+            height: coverH, width: '100%', cursor: 'zoom-in',
+            position: 'relative', background: m.kind === 'video' ? dark : '#0001',
+            backgroundImage: m.kind === 'image' ? `url(${withToken(m.url)})` : 'none',
+            backgroundSize: 'cover', backgroundPosition: 'center',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+          {m.kind === 'video' && <PlayBadge />}
+        </div>
+        {lightbox}
+      </>
+    );
+  }
+
+  // Multiple → side-by-side strip. Show up to 4 tiles; the 4th becomes a
+  // "+N more" overflow tile when there are extras.
+  const MAX = 4;
+  const overflow = media.length > MAX ? media.length - (MAX - 1) : 0;
+  const shown = overflow ? media.slice(0, MAX - 1) : media.slice(0, MAX);
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 3, height: tileH, background: theme.card }}>
+        {shown.map((m, idx) => (
+          <Tile key={m.id} m={m} onClick={(e) => open(e, idx)} dark={dark} />
+        ))}
+        {overflow > 0 && (
+          <div onClick={(e) => open(e, MAX - 1)} title={rtl ? 'عرض الكل' : 'View all'}
+            style={{
+              flex: 1, minWidth: 0, position: 'relative', cursor: 'zoom-in',
+              background: dark, color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 13, fontWeight: 700,
+            }}>
+            +{overflow}
+          </div>
+        )}
+      </div>
+      {lightbox}
+    </>
+  );
+}
+
+function Tile({ m, onClick, dark }) {
+  return (
+    <div onClick={onClick} title={m.name}
+      style={{
+        flex: 1, minWidth: 0, position: 'relative', cursor: 'zoom-in',
+        background: m.kind === 'video' ? dark : '#0001',
+        backgroundImage: m.kind === 'image' ? `url(${withToken(m.url)})` : 'none',
+        backgroundSize: 'cover', backgroundPosition: 'center',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+      {m.kind === 'video' && <PlayBadge small />}
+    </div>
+  );
+}
+
+function PlayBadge({ small }) {
+  const d = small ? 22 : 34;
+  return (
+    <span style={{
+      width: d, height: d, borderRadius: '50%',
+      background: 'rgba(0,0,0,.45)', color: '#fff',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: small ? 10 : 14, paddingInlineStart: 2,
+    }}>▶</span>
   );
 }

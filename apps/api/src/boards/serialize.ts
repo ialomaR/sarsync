@@ -77,6 +77,7 @@ interface RawBoard {
       coverLabel: string | null;
       coverAttachmentId: string | null;
       completedAt: Date | null;
+      attachments?: Array<{ id: string; mimeType: string; filename: string }>;
       labels: Array<{ labelId: string }>;
       members: Array<{ userId: string }>;
       fieldValues?: Array<{
@@ -133,6 +134,23 @@ export function serializeBoard(
           .map((c) => {
             const total = c.checklist?.length ?? 0;
             const done = c.checklist?.filter((k) => k.done).length ?? 0;
+            // Image/video attachments surfaced on the board card as a gallery.
+            // The chosen cover (if any) floats to the front so a single image
+            // renders as the cover and the order is stable.
+            const media = (c.attachments ?? [])
+              .filter((a) => a.mimeType.startsWith('image/') || a.mimeType.startsWith('video/'))
+              .map((a) => ({
+                id: a.id,
+                kind: a.mimeType.startsWith('video/') ? 'video' : 'image',
+                mime: a.mimeType,
+                name: a.filename,
+                url: `/api/attachments/${a.id}`,
+              }))
+              .sort((x, y) => {
+                if (x.id === c.coverAttachmentId) return -1;
+                if (y.id === c.coverAttachmentId) return 1;
+                return 0;
+              });
             return {
               id: c.id,
               listId: c.listId,
@@ -144,6 +162,7 @@ export function serializeBoard(
               coverLabel: c.coverLabel,
               coverAttachmentId: c.coverAttachmentId,
               coverUrl: c.coverAttachmentId ? `/api/attachments/${c.coverAttachmentId}` : null,
+              media,
               completedAt: c.completedAt ? c.completedAt.toISOString() : null,
               labelIds: c.labels.map((x) => x.labelId),
               memberIds: c.members.map((x) => x.userId),

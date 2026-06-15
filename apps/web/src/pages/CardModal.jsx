@@ -5,6 +5,22 @@ import { Icon } from '../ui/Icon.jsx';
 import { iconBtn } from '../ui/theme.js';
 import { api, getAccessToken } from '../lib/api.js';
 import { subscribeSocket } from '../lib/socket.js';
+import { MediaLightbox } from '../ui/MediaLightbox.jsx';
+
+// Map the card's raw attachments to the gallery media shape used by the board
+// card, cover-first, so the board stays in sync when attachments change here.
+function mediaFromAttachments(attachments, coverAttachmentId) {
+  return (attachments || [])
+    .filter((a) => a.mimeType?.startsWith('image/') || a.mimeType?.startsWith('video/'))
+    .map((a) => ({
+      id: a.id,
+      kind: a.mimeType.startsWith('video/') ? 'video' : 'image',
+      mime: a.mimeType,
+      name: a.filename,
+      url: a.url || `/api/attachments/${a.id}`,
+    }))
+    .sort((x, y) => (x.id === coverAttachmentId ? -1 : y.id === coverAttachmentId ? 1 : 0));
+}
 
 // Append the user's access token to attachment URLs so <img>/CSS background
 // requests can authenticate (browsers won't send Authorization headers).
@@ -142,6 +158,18 @@ export function CardModal({ theme, rtl, onClose, cardId, listTitle, workspaceId,
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Keep the board card's media gallery in sync whenever this card's
+  // attachments (or the chosen cover) change here — add, delete, set-cover.
+  // mediaFromAttachments is cover-first, matching the board serializer.
+  const cardAttachments = state.card?.attachments;
+  const cardCoverId = state.card?.coverAttachmentId;
+  React.useEffect(() => {
+    if (!cardAttachments) return;
+    onCardChanged?.({ media: mediaFromAttachments(cardAttachments, cardCoverId) });
+    // onCardChanged is a stable board mutator; excluded to avoid refiring.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardAttachments, cardCoverId]);
 
   const c = state.card;
 
@@ -1548,7 +1576,7 @@ function AttachmentsSection({ theme, rtl, attachments, coverAttachmentId, canEdi
   );
 
   const lightbox = previewing && (
-    <AttachmentLightbox theme={theme} rtl={rtl} attachment={previewing} onClose={() => setPreviewing(null)} />
+    <MediaLightbox theme={theme} rtl={rtl} items={[previewing]} index={0} onClose={() => setPreviewing(null)} />
   );
 
   if (attachments.length === 0) {
@@ -1810,62 +1838,6 @@ function AttachmentRow({ attachment: a, theme, rtl, isCover, onPreview, onDelete
 // Centered overlay that previews an image or plays a video without leaving
 // the card. Click backdrop or Escape to close. zIndex sits above the card
 // modal (50) and the media picker (90).
-function AttachmentLightbox({ theme, rtl, attachment: a, onClose }) {
-  const isImage = a.mimeType?.startsWith('image/');
-  const isVideo = a.mimeType?.startsWith('video/');
-  React.useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      background: 'rgba(0,0,0,.85)', backdropFilter: 'blur(6px)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: 24, direction: rtl ? 'rtl' : 'ltr',
-    }}>
-      <button onClick={onClose} aria-label="Close" style={{
-        position: 'absolute', top: 16, insetInlineEnd: 16,
-        width: 36, height: 36, borderRadius: '50%',
-        background: 'rgba(255,255,255,.12)', color: '#fff',
-        border: 'none', fontSize: 22, lineHeight: 1, cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: 'inherit',
-      }}>×</button>
-      <div onClick={(e) => e.stopPropagation()} style={{
-        maxWidth: '90vw', maxHeight: '85vh',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
-      }}>
-        {isImage && (
-          <img src={withToken(a.url)} alt={a.filename}
-            style={{ maxWidth: '90vw', maxHeight: '78vh', objectFit: 'contain', borderRadius: 6 }} />
-        )}
-        {isVideo && (
-          <video src={withToken(a.url)} controls autoPlay playsInline
-            style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 6, background: '#000' }} />
-        )}
-        {!isImage && !isVideo && (
-          <div style={{ color: '#fff', fontSize: 14 }}>
-            {rtl ? 'لا يمكن المعاينة' : 'Preview not available'}
-          </div>
-        )}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 12,
-          color: 'rgba(255,255,255,.85)', fontSize: 12.5,
-          background: 'rgba(0,0,0,.4)', padding: '6px 12px', borderRadius: 6,
-        }}>
-          <span style={{ fontWeight: 600 }}>{a.filename}</span>
-          <a href={withToken(a.url)} download={a.filename}
-            style={{ color: '#fff', textDecoration: 'underline', fontSize: 12 }}>
-            {rtl ? 'تنزيل' : 'Download'}
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ActivitySection({ theme, rtl, activity }) {
   const [open, setOpen] = React.useState(false);
   if (!activity || activity.length === 0) return null;

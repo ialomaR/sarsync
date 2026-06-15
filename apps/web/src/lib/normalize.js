@@ -44,6 +44,7 @@ export function normalizeCard(c) {
     members: c.memberIds || [],
     due: formatDueDate(c.due),
     dueIso: c.due || null, // raw ISO for real overdue comparison (see Card.jsx)
+    media: c.media || [], // image/video attachments for the card gallery
     orderedBy: c.orderedBy || null,
     checklist: c.checklistTotal > 0 ? { done: c.checklistDone, total: c.checklistTotal } : null,
     comments: c.commentCount || 0,

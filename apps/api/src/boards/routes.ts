@@ -218,6 +218,11 @@ export async function boardsRoutes(app: FastifyInstance) {
                 fieldValues: true,
                 _count: { select: { comments: true } },
                 checklist: { select: { done: true } },
+                // Image/video attachments power the card media gallery.
+                attachments: {
+                  select: { id: true, mimeType: true, filename: true },
+                  orderBy: { createdAt: 'asc' },
+                },
               },
             },
           },
